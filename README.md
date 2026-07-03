@@ -12,10 +12,8 @@ and the clean UX of native icon managers, rebuilt as a lightweight Tauri app.
 Grab the latest `.dmg` from the
 [**Releases**](https://github.com/ensaktas1/icones-desktop/releases/latest) page.
 
-1. Open the `.dmg` and drag **Icônes** into your **Applications** folder.
-2. The app isn't notarized yet, so on first launch macOS warns about an
-   unidentified developer. Right-click the app → **Open** → **Open** (just once).
-   Alternatively run `xattr -cr /Applications/Icônes.app` in Terminal.
+Open the `.dmg` and drag **Icônes** into your **Applications** folder — that's it.
+The app is signed and notarized by Apple, so it opens with no warnings.
 
 > Currently **Apple Silicon (arm64)** only — Intel/universal builds coming later.
 
