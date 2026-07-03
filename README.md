@@ -7,6 +7,8 @@ fast, keyboard-friendly desktop app.
 Inspired by [icones](https://icones.js.org) ([antfu-collective/icones](https://github.com/antfu-collective/icones))
 and the clean UX of native icon managers, rebuilt as a lightweight Tauri app.
 
+![Icônes — a native macOS icon browser](docs/screenshot.png)
+
 ## Download
 
 Grab the latest `.dmg` from the
