@@ -41,9 +41,6 @@
 - 修复原版输入 Bug：18px → 输入 24 会变成 44（每键即 clamp 误导）；Padding/旋转 输入 80 会变成 080（前导零未清）。改用本地文本状态、blur 时夹紧、`stripLeadingZeros` 清前导零
 <img width="1596" height="1017" alt="3" src="https://github.com/user-attachments/assets/151b8443-45a7-41cf-8bc4-9a2da179140f" />
 
-### 5. 启动交互
-- 启动后默认浏览第一个库（lucide），搜索框无 pill，搜索直接走全局，不被某个库限制
-- 顶部 logo 改为 GitHub 仓库链接
 
 ## Tech
 
