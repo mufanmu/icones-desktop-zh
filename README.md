@@ -22,31 +22,26 @@
 - 新增本地词典 `public/zh-dict.json`（1000+ 词条 / 1900+ 中文词），覆盖常用概念、动物、水果蔬菜、运动、运动器械、建筑、地标、家电、医疗、几何形状、AI/机器人、自然、载具、人物表情等数十个分类
 - 新增 `src/lib/zhSearch.ts`：CJK 自动检测、词典懒加载、整句/子串/片段三级匹配回退
 - 输入中文时按词条翻译成英文检索词，并发调用 Iconify `search` API 并集去重
- ![Uploading 1.png…]()
+<img width="1596" height="1017" alt="1" src="https://github.com/user-attachments/assets/3078d29e-6382-4a84-afbe-50aeec7a1728" />
 
-
-### 2. 国家/地区国旗搜索
-- 新增 60+ 国家/地区词条，每条含国名 + ISO 短码 + 旗帜别名（如「英国 / 联合王国 / 米字旗」→ `gb / uk`）
-- **国旗精确匹配**：对 ≤3 字母 ISO 短码启用严格模式，只保留标准国旗库 (`circle-flags` / `cif` / `flagpack` / `flag`) 的国家主形态与 `flag` 库的 `-1x1` / `-4x3` 尺寸后缀，剔除下属区域子码（gb-eng / gb-sct…）与伪装成短码的无关图标（token:gbex 等）
-- **台港澳归类**：词典把 `cn / tw / hk / mo` 标记为同类，搜「中国」时一并展开四码，台港澳国旗与中国国旗一齐出现；单搜「台湾」仍只出台湾
-
-### 3. 库内 OneBox 风格搜索
+### 2. 库内 OneBox 风格搜索
 - 选中侧边栏图标库或在详情面板点击「跳转该库」时，搜索框内出现库 pill（仿 macOS Finder 的 tokenized input 模式）
 - 点 pill 主体清空关键词回到该库浏览；点 pill 叉号或 Backspace 按段删两次回全局搜索
 - pill 命中后搜索自动限制在该库内做本地实时过滤，零网络延迟
 - 库内中文搜索同样支持（先翻译再过滤图标名）
-![Uploading 2.png…]()
+<img width="1596" height="1017" alt="2" src="https://github.com/user-attachments/assets/1ef7685c-3e17-4c6c-9ccd-67af0f27248c" />
 
-### 4. 详情面板：库跳转
+
+### 3. 详情面板：库跳转
 - 选中图标后，详情头部图标名下方新增「跳转该库」链接，点击直接切到对应图标库的浏览视图（应用内切换，非外链）
 
-### 5. 详情面板：参数滑块 + 输入 Bug 修复
+### 4. 详情面板：参数滑块 + 输入 Bug 修复
 - 尺寸、Padding、旋转角三个参数都加了滑块，与输入框同步
 - 默认尺寸由 18px 改为 24px
 - 修复原版输入 Bug：18px → 输入 24 会变成 44（每键即 clamp 误导）；Padding/旋转 输入 80 会变成 080（前导零未清）。改用本地文本状态、blur 时夹紧、`stripLeadingZeros` 清前导零
 <img width="1596" height="1017" alt="3" src="https://github.com/user-attachments/assets/151b8443-45a7-41cf-8bc4-9a2da179140f" />
 
-### 6. 启动交互
+### 5. 启动交互
 - 启动后默认浏览第一个库（lucide），搜索框无 pill，搜索直接走全局，不被某个库限制
 - 顶部 logo 改为 GitHub 仓库链接
 
