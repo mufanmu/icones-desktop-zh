@@ -5,7 +5,7 @@ import type { CollectionMeta } from "../lib/api";
 
 export type PaletteFilter = "all" | "mono" | "color";
 
-const DESERVE_URL = "https://deserve.studio";
+const GITHUB_URL = "https://github.com/mufanmu/icones-desktop-zh";
 
 interface Props {
   collections: CollectionMeta[];
@@ -60,7 +60,7 @@ export function Sidebar({
     });
 
   const openSite = () => {
-    openUrl(DESERVE_URL).catch(() => window.open(DESERVE_URL, "_blank"));
+    openUrl(GITHUB_URL).catch(() => window.open(GITHUB_URL, "_blank"));
   };
 
   return (
@@ -146,8 +146,9 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-foot">
-        <button className="built-by" onClick={openSite}>
-          Built by <span>Deserve Studio</span>
+        <button className="built-by" onClick={openSite} title={GITHUB_URL}>
+          <Icon icon="lucide:github" />
+          <span>mufanmu/icones-desktop-zh</span>
           <Icon icon="lucide:arrow-up-right" />
         </button>
       </div>

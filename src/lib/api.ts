@@ -81,5 +81,40 @@ export async function searchIcons(query: string, limit = 120): Promise<SearchRes
   if (!q) return { icons: [], total: 0 };
   const res = await fetch(`${API}/search?query=${encodeURIComponent(q)}&limit=${limit}`);
   const data = (await res.json()) as any;
-  return { icons: data.icons ?? [], total: data.total ?? (data.icons?.length ?? 0) };
+  const icons: string[] = data.icons ?? [];
+  return { icons, total: data.total ?? icons.length };
+}
+
+// 联合搜索：对一组英文检索词并发查询，合并去重结果。
+// 用于中文输入经 zh-dict 翻译后的多关键词场景。
+export async function searchIconsMulti(
+  queries: string[],
+  limit = 120,
+): Promise<SearchResult> {
+  const qs = queries.map((s) => s.trim()).filter(Boolean);
+  if (qs.length === 0) return { icons: [], total: 0 };
+  if (qs.length === 1) return searchIcons(qs[0], limit);
+
+  const per = Math.max(8, Math.ceil(limit / qs.length));
+  const results = await Promise.all(
+    qs.map(async (q) => {
+      try {
+        return await searchIcons(q, per);
+      } catch {
+        return { icons: [], total: 0 };
+      }
+    }),
+  );
+
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const r of results) {
+    for (const name of r.icons) {
+      if (!seen.has(name)) {
+        seen.add(name);
+        merged.push(name);
+      }
+    }
+  }
+  return { icons: merged.slice(0, limit), total: merged.length };
 }

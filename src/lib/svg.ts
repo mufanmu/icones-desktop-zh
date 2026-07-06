@@ -16,7 +16,7 @@ export interface RenderOptions {
 }
 
 export const DEFAULT_OPTIONS: RenderOptions = {
-  size: 18,
+  size: 24,
   padding: 0,
   rotate: 0,
   hFlip: false,
