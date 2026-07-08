@@ -45,7 +45,7 @@ jobs:
         with:
           args: --target universal-apple-darwin
           tagName: ${{ github.ref_name }}
-          releaseName: "Icônes ${{ github.ref_name }}"
+          releaseName: "Icônes 中文版 ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
 
@@ -88,6 +88,6 @@ jobs:
         with:
           args: --target ${{ matrix.target }}
           tagName: ${{ github.ref_name }}
-          releaseName: "Icônes ${{ github.ref_name }}"
+          releaseName: "Icônes 中文版 ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
