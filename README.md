@@ -20,11 +20,9 @@
 
 ### Windows
 
-从 [**Releases**](https://github.com/mufanmu/icones-desktop-zh/releases/latest) 下载对应架构的 `.msi` 或 `.exe` 安装包：
-- **Intel/AMD 处理器**：选 `x64` 版本（绝大多数 PC）
-- **Windows on ARM**：选 `aarch64` 版本
+从 [**Releases**](https://github.com/mufanmu/icones-desktop-zh/releases/latest) 下载 `.exe` 安装包（`x64`，适用于 Intel/AMD 处理器，绝大多数 PC 均可；Windows on ARM 设备也可经系统模拟运行此包）。
 
-> Windows 版由 CI 在打 tag 时与 macOS 同步自动构建，分别产出 x64 与 arm64 两个架构的 `.msi`/`.exe`。
+> Windows 版由 CI 在打 tag 时与 macOS 同步自动构建，产出 `x64` 架构的 `.exe`。
 > 未做代码签名，首次运行时 Windows SmartScreen 可能提示「已保护你的电脑 / 未知发布者」——点「更多信息」→「仍要运行」放行一次即可。
 
 ## 与原版相比的优化
@@ -88,10 +86,9 @@ npm run tauri:build:universal    # 产物在 src-tauri/target/universal-apple-da
 ```bash
 # 需先安装 Rust（rustup.rs）与 Visual Studio Build Tools 的「使用 C++ 的桌面开发」工作负载
 npm run tauri:build:windows-x64      # Intel/AMD，产物在 src-tauri/target/x86_64-pc-windows-msvc/release/bundle
-npm run tauri:build:windows-arm64    # Windows on ARM
 ```
 
-> 打 `v*` tag 会触发 [.github/workflows/release.yml](.github/workflows/release.yml) 自动构建 macOS Universal `.dmg` 与 Windows `.msi`/`.exe` 并发到 Releases（草稿）。
+> 打 `v*` tag 会触发 [.github/workflows/release.yml](.github/workflows/release.yml) 自动构建 macOS Universal `.dmg` 与 Windows `.exe` 并发到 Releases（草稿）。
 
 ## 协议
 

@@ -11,8 +11,7 @@
     "tauri:build": "tauri build",
     "tauri:build:universal": "tauri build --target universal-apple-darwin",
     "tauri:build:intel": "tauri build --target x86_64-apple-darwin",
-    "tauri:build:windows-x64": "tauri build --target x86_64-pc-windows-msvc",
-    "tauri:build:windows-arm64": "tauri build --target aarch64-pc-windows-msvc"
+    "tauri:build:windows-x64": "tauri build --target x86_64-pc-windows-msvc"
   },
   "dependencies": {
     "@iconify/react": "^6.0.2",
