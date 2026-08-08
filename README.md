@@ -8,12 +8,7 @@
 
 ## 下载
 
-> **一键直达最新版**（链接永不失效，自动指向最新 Release）：
->
-> - 🍎 macOS：<https://github.com/mufanmu/icones-desktop-zh/releases/latest/download/Icones-macos.dmg>
-> - 🪟 Windows：<https://github.com/mufanmu/icones-desktop-zh/releases/latest/download/Icones-windows.exe>
->
-> 以上链接指向 CI 每次发布时同步上传的**固定名资产**（不带版本号），因此永远指向最新版安装包。
+打开本仓库的 [**Releases**](https://github.com/mufanmu/icones-desktop-zh/releases/latest) 页面，在最新版本下下载对应平台的安装包（`Icones_0.1.x_universal.dmg` / `Icones_0.1.x_x64-setup.exe`）。应用内左下角自带版本检测，发现新版本时会提示并跳转下载页。
 
 ### macOS
 

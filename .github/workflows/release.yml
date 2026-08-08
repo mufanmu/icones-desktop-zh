@@ -1,21 +1,18 @@
 name: Release
 
-# 打 tag（如 v0.1.4）即自动构建 macOS Universal .dmg 与 Windows .exe 并发到 Releases（草稿）。
+# 打 tag（如 v0.1.5）即自动构建 macOS Universal .dmg 与 Windows .exe 并发到 Releases（草稿）。
 # 发 tag 前请先把 src-tauri/tauri.conf.json、src-tauri/Cargo.toml 与 package.json 的 version 同步成该 tag，
 # 否则产物文件名/版本号会与 Release 标题不一致。仅用 tag 触发（不加 workflow_dispatch：
 # 手动触发时 github.ref_name 是分支名，会被当成版本号建出垃圾 Release）。
-# 版本号必须为纯数字（如 0.1.4），不能带 -zh 等非数字后缀，否则 MSI 打包会失败。
+# 版本号必须为纯数字（如 0.1.5），不能带 -zh 等非数字后缀，否则 MSI 打包会失败。
 #
-# 除带版本号的产物外，每个 Release 还会额外上传「固定资产名」副本：
-#   macOS  →  Icones-macos.dmg
-#   Windows → Icones-windows.exe
-# 固定名资产让以下链接永远指向最新版安装包（无需改任何链接）：
-#   https://github.com/mufanmu/icones-desktop-zh/releases/latest/download/Icones-macos.dmg
-#   https://github.com/mufanmu/icones-desktop-zh/releases/latest/download/Icones-windows.exe
-# 注意：带版本号的产物名（Icones_0.1.4_universal.dmg）里的版本号会变，
-# 因此 latest/download 不能直接用版本号资产名；固定名副本是「永远最新」的下载入口。
-# 最新 release 只保留固定名资产（上传后删除带版本号的）；历史版本保留版本号资产供回退。
-# 发布后需显式 make_latest=true（否则 releases/latest 可能按 commit 时间指向旧版）。
+# 打包策略（简单版）：
+# - 包体资产名带版本号：Icones_0.1.5_universal.dmg / Icones_0.1.5_x64-setup.exe
+# - 每次新版本 = 新版本号资产，旧版本资产保留（历史回退入口）
+# - 下载入口：https://github.com/mufanmu/icones-desktop-zh/releases/latest
+#   （自动跳转最新 Release 页面，用户在页面里下载对应版本包体）
+# - 应用内自带更新检查（左下角版本检测），发现新版本跳转 Releases，用户自行升级
+# - finalize 自动 make_latest=true + 发布（GitHub latest 按 commit 时间排序，需显式指定）
 on:
   push:
     tags:
@@ -60,17 +57,6 @@ jobs:
           releaseDraft: true
           prerelease: false
 
-      - name: Upload fixed-name .dmg & clean versioned asset
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          dmg=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" ! -name "rw.*" | head -1)
-          echo "found: $dmg"
-          cp "$dmg" "Icones-macos.dmg"
-          gh release upload "${{ github.ref_name }}" "Icones-macos.dmg" --clobber
-          # 最新 release 只保留固定名资产，删掉带版本号的（历史版本仍有版本号资产可回退）
-          gh release delete-asset "${{ github.ref_name }}" "$(basename "$dmg")" --yes
-
   build-windows:
     runs-on: windows-latest
     steps:
@@ -103,17 +89,6 @@ jobs:
           releaseName: "Icônes 中文版 ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
-
-      - name: Upload fixed-name .exe & clean versioned asset
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          exe=$(find src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -name "*.exe" | head -1)
-          echo "found: $exe"
-          copy "$exe" "Icones-windows.exe"
-          gh release upload "${{ github.ref_name }}" "Icones-windows.exe" --clobber
-          # 最新 release 只保留固定名资产，删掉带版本号的（历史版本仍有版本号资产可回退）
-          gh release delete-asset "${{ github.ref_name }}" "$(basename "$exe")" --yes
 
   finalize:
     needs: [build-macos-universal, build-windows]
