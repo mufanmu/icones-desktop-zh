@@ -95,7 +95,10 @@ export async function searchIconsMulti(
   if (qs.length === 0) return { icons: [], total: 0 };
   if (qs.length === 1) return searchIcons(qs[0], limit);
 
-  const per = Math.max(8, Math.ceil(limit / qs.length));
+  // 配额策略：翻译词少（≤5，通常前几个是精确命中、高相关）时每词直接取满 limit，
+  // 避免均分导致主词（如「相机」→ camera）配额不足、结果被弱相关词挤占变少。
+  // 翻译词多（>5，模糊扩展场景）时仍均分，控制请求量与合并成本。
+  const per = qs.length <= 5 ? limit : Math.max(8, Math.ceil(limit / qs.length));
   const results = await Promise.all(
     qs.map(async (q) => {
       try {
@@ -106,11 +109,16 @@ export async function searchIconsMulti(
     }),
   );
 
+  // Round-robin 轮转交错合并：第 i 轮每个词各取第 i 条结果，交错入列。
+  // 避免首个检索词的结果整块霸屏——各词的 top 结果均匀露出首屏，
+  // 而翻译词顺序（zhSearch 按专一度排序）仍决定同一轮内的先后。
   const seen = new Set<string>();
   const merged: string[] = [];
-  for (const r of results) {
-    for (const name of r.icons) {
-      if (!seen.has(name)) {
+  const maxLen = Math.max(...results.map((r) => r.icons.length));
+  for (let i = 0; i < maxLen; i++) {
+    for (const r of results) {
+      const name = r.icons[i];
+      if (name && !seen.has(name)) {
         seen.add(name);
         merged.push(name);
       }

@@ -13,6 +13,7 @@ import {
 } from "./lib/api";
 import { detectVariants, matchesVariant } from "./lib/variants";
 import { isChinese, loadDict, translateChinese, filterCountryIconsForTerms, isCountryCode } from "./lib/zhSearch";
+import { rankIconsByRelevance } from "./lib/rank";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
@@ -123,7 +124,8 @@ export default function App() {
                   });
                 });
           if (!alive) return;
-          setNames(filtered);
+          // 相关度重排：名字精确/前缀/独立段匹配优先于纯子串（如 camera > camera-off > video-camera）
+          setNames(rankIconsByRelevance(filtered, lowerTerms));
           setTotal(filtered.length);
         } else {
           // 全局搜索
@@ -135,14 +137,23 @@ export default function App() {
             terms = translateChinese(query);
             r = await searchIconsMulti(terms, limit);
           } else {
-            terms = [query.trim()];
-            r = await searchIcons(query, limit);
+            // 英文输入也先查字典：品牌词（gpt/wechat/alipay）等能映射到词典词条做多词扩展
+            await loadDict();
+            const expanded = translateChinese(query);
+            if (expanded.length > 0) {
+              terms = expanded;
+              r = await searchIconsMulti(expanded, limit);
+            } else {
+              terms = [query.trim()];
+              r = await searchIcons(query, limit);
+            }
           }
           if (!alive) return;
           const lowered = terms.map((t) => t.toLowerCase());
           // 国旗精确过滤：若翻译词含真实国家码，剔除伪装者
           const finalIcons = filterCountryIconsForTerms(r.icons, lowered);
-          setNames(finalIcons);
+          // 相关度重排：名字精确/前缀/独立段匹配优先（camera > camera-off > video-camera > videocamera）
+          setNames(rankIconsByRelevance(finalIcons, lowered));
           // “加载更多”需要真实总数：普通英文单词搜索用 API 返回的 total（可翻页到 200 以上）；
           // 中文多词并集 / 国旗过滤 / 已取尽（返回不足 limit）时无可靠服务端总数，用当前结果数。
           const noServerTotal =

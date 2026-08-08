@@ -10,10 +10,15 @@ export interface DictEntry {
 let dictCache: DictEntry[] | null = null;
 let zhIndex: Map<string, string[]> | null = null; // zh term -> en terms
 let cnTermsCache: string[] | null = null; // 中国相关全部英文码集合
+let zhCnTerms: Set<string> | null = null; // 属于 _cn 词条的中文词集合（快速判断国旗归类）
 
 const CJK = /[\u4e00-\u9fff]/;
 const FLAG_PREFIXES = new Set(["cif", "circle-flags", "flag", "flagpack"]);
 const FLAG_SIZE_SUFFIX = new Set(["1x1", "4x3"]); // flag 库的尺寸后缀白名单
+
+// 模糊关联的规模控制：避免反向匹配把词条/检索词数量引爆（每个英文词都会触发一次 API 请求）
+const MAX_FUZZY_ENTRIES = 14; // 非精确命中的词条上限（按相关度评分取前 N）
+const MAX_TERMS = 24; // 最终翻译出的英文检索词上限
 
 export function isChinese(q: string): boolean {
   return CJK.test(q);
@@ -27,6 +32,7 @@ export async function loadDict(): Promise<DictEntry[]> {
     if (!res.ok) throw new Error(`dict http ${res.status}`);
     const data = (await res.json()) as DictEntry[];
     zhIndex = new Map<string, string[]>();
+    zhCnTerms = new Set<string>();
     cnTermsCache = [];
     for (const e of data) {
       for (const zh of e.zh) {
@@ -34,6 +40,7 @@ export async function loadDict(): Promise<DictEntry[]> {
         if (!norm) continue;
         const prev = zhIndex.get(norm);
         zhIndex.set(norm, prev ? [...prev, ...e.en] : [...e.en]);
+        if (e._cn) zhCnTerms.add(norm);
       }
       if (e._cn) cnTermsCache.push(...e.en);
     }
@@ -43,54 +50,90 @@ export async function loadDict(): Promise<DictEntry[]> {
     console.error("[zh-dict] load failed:", err);
     dictCache = [];
     zhIndex = new Map();
+    zhCnTerms = new Set();
     cnTermsCache = [];
     return [];
   }
 }
 
-// 把任意中文查询翻译成一组英文检索词，并附加按子串匹配的字典翻译。
-// 中国相关词条（含台港澳）任一命中时，统一展开全部 cn/tw/hk/mo 英文码。
+// 匹配命中记录：score 用于在非精确命中过多时做关联度裁剪。
+// 三级匹配（优先级从高到低）：
+//   exact   完整匹配：查询词 === 词条
+//   forward 正向子串：查询词包含词条（"我想找个搜索图标" → 命中「搜索」）
+//   reverse 反向模糊：词条包含查询词（"箭头" → 命中「左箭头」「右上箭头」「双箭头」…）
+// reverse 是关联性的关键：用户给出一个概念大类时，把所有包含该概念的具体词条都联想出来。
+interface ZhHit {
+  zh: string;
+  ens: string[];
+  score: number;
+  cn: boolean;
+}
+
 export function translateChinese(query: string): string[] {
   const q = query.trim();
   if (!q || !zhIndex) return [];
-  const out = new Set<string>();
-  let hitCn = false;
 
-  const addEns = (ens: string[]) => {
-    for (const en of ens) out.add(en);
+  // 纯英文/数字查询（如 gpt、alipay、visa）：只做词条精确匹配，
+  // 不做 forward/reverse 子串模糊——避免 "pay" 反向命中 "paypal"、"car" 命中 "card" 等污染。
+  const pureAscii = !CJK.test(q);
+
+  const exact: ZhHit[] = [];
+  const forward: ZhHit[] = [];
+  const reverse: ZhHit[] = [];
+
+  const isCn = (zh: string) => zhCnTerms?.has(zh) ?? false;
+
+  const matchAgainst = (text: string, minReverseLen: number) => {
+    for (const [zh, ens] of zhIndex!.entries()) {
+      // 精确匹配：纯英文查询不区分大小写（"QQ" 命中词条 "qq"）
+      if (zh === text || (pureAscii && zh.toLowerCase() === text.toLowerCase())) {
+        exact.push({ zh, ens, score: 100 + zh.length, cn: isCn(zh) });
+      } else if (!pureAscii && zh.length >= 2 && text.includes(zh)) {
+        forward.push({ zh, ens, score: 50 + zh.length * 2, cn: isCn(zh) });
+      } else if (!pureAscii && text.length >= minReverseLen && zh.includes(text) && zh !== text) {
+        // 关联度 = 查询词在词条中的占比，占比越高越相关（"箭头"之于「左箭头」高于之于「向上箭头图标」）
+        const ratio = text.length / zh.length;
+        reverse.push({ zh, ens, score: 10 + ratio * 30, cn: isCn(zh) });
+      }
+    }
   };
 
-  // 1) 完整匹配
-  for (const [zh, ens] of zhIndex!.entries()) {
-    if (zh === q) {
-      addEns(ens);
-      // 完整匹配"中国"/"台湾"/"香港"/"澳门"任一 → 整组台港澳码一并加入
-      const entry = dictCache!.find((e) => e.zh.includes(zh));
-      if (entry?._cn) hitCn = true;
-    }
+  // 1) 对整个查询做三级匹配（纯英文只走精确匹配）
+  matchAgainst(q, 1);
+
+  // 2) 整句无精确/正向命中时，取最长的几个 CJK 片段重试
+  //    （支持"我想要一个向右的箭头图标"这种长句；片段 ≥2 字才做反向模糊，避免单字噪音）
+  if (!pureAscii && exact.length === 0 && forward.length === 0) {
+    const frags = (q.match(/[\u4e00-\u9fff]+/g) ?? [])
+      .filter((f) => f !== q)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 3);
+    for (const frag of frags) matchAgainst(frag, 2);
   }
 
-  // 2) 子串匹配（支持"我想找个搜索图标"这种长句）
-  for (const [zh, ens] of zhIndex!.entries()) {
-    if (zh.length < 2) continue;
-    if (q.includes(zh)) {
-      addEns(ens);
-      const entry = dictCache!.find((e) => e.zh.includes(zh));
-      if (entry?._cn) hitCn = true;
-    }
-  }
+  // 3) 非精确命中的词条可能很多（常见字如「机/车/图」会命中几十条），
+  //    按关联度评分取前 N，防止检索词爆炸导致 API 请求数失控。
+  //    去污染：若某个正向命中的短词条是某条精确匹配词条的子串（如「面包」⊂「面包屑」），
+  //    说明精确词条已经完整表达了意图，跳过该短词条，避免带入无关语义（面包屑 ≠ 面包）。
+  const exactTerms = exact.map((h) => h.zh);
+  const fuzzy = [...forward, ...reverse]
+    .filter((h) => !exactTerms.some((t) => t.includes(h.zh) && t !== h.zh))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_FUZZY_ENTRIES);
 
-  // 3) 最长中文连续片段再尝试一次整体匹配（"搜索图标" -> "搜索"）
-  if (out.size === 0) {
-    const m = q.match(/[\u4e00-\u9fff]+/g) ?? [];
-    for (const frag of m) {
-      for (const [zh, ens] of zhIndex!.entries()) {
-        if (zh === frag || (zh.length >= 2 && frag.includes(zh))) {
-          addEns(ens);
-          const entry = dictCache!.find((e) => e.zh.includes(zh));
-          if (entry?._cn) hitCn = true;
-        }
-      }
+  // 4) 专一度优先：exact 命中中单义词条（如纯 ["camera"]）排在混合词条
+  //    （如 ["video","camera","film"]）之前，保证翻译词顺序 = 相关度顺序，
+  //    避免混合词条里排在首位的泛义词（video）污染首屏。
+  exact.sort((a, b) => a.ens.length - b.ens.length);
+
+  // 5) 合并检索词：精确命中最优先，其次高关联词条；总数封顶。
+  const out = new Set<string>();
+  let hitCn = false;
+  for (const hit of [...exact, ...fuzzy]) {
+    if (hit.cn) hitCn = true;
+    for (const en of hit.ens) {
+      if (out.size >= MAX_TERMS) break;
+      out.add(en);
     }
   }
 

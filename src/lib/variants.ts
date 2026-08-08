@@ -8,7 +8,7 @@ export interface Variant {
 }
 
 // Recurring style words that show up as name segments across icon sets.
-const STYLE_TOKENS = new Set([
+export const STYLE_TOKENS = new Set([
   "filled", "fill", "regular", "outline", "outlined", "bold", "solid",
   "line", "linear", "broken", "duotone", "twotone", "sharp", "round",
   "rounded", "thin", "light", "extralight", "medium", "semibold", "black",
@@ -17,7 +17,7 @@ const STYLE_TOKENS = new Set([
 
 // Real icon sizes are 2–3 digit values (10, 12, 16, 24, 48…). Single digits like
 // the "2" in "columns-2" are name parts, not size variants.
-const isSize = (t: string) => /^\d{2,3}$/.test(t) && +t >= 8 && +t <= 512;
+export const isSize = (t: string) => /^\d{2,3}$/.test(t) && +t >= 8 && +t <= 512;
 
 function nameOf(full: string): string {
   const i = full.indexOf(":");

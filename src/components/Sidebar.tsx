@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@iconify/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { CollectionMeta } from "../lib/api";
+import { RELEASES_URL, checkForUpdates, getAppVersion, openExternal } from "../lib/update";
 
 export type PaletteFilter = "all" | "mono" | "color";
 
@@ -33,6 +34,18 @@ export function Sidebar({
   onGridSize,
 }: Props) {
   const [setQuery, setSetQuery] = useState("");
+  const [appVer, setAppVer] = useState("");
+  const [latest, setLatest] = useState<string | null>(null);
+
+  // 加载本地版本号 + 检测 GitHub 是否有新版本（session 内只查一次）
+  useEffect(() => {
+    let alive = true;
+    getAppVersion().then((v) => alive && setAppVer(v)).catch(() => {});
+    checkForUpdates().then((v) => alive && setLatest(v)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Group collections by category, filtered by the palette and the set search.
   const groups = useMemo(() => {
@@ -151,6 +164,19 @@ export function Sidebar({
           <span>mufanmu/icones-desktop-zh</span>
           <Icon icon="lucide:arrow-up-right" />
         </button>
+        <div className="foot-row">
+          {appVer && <span className="foot-version">v{appVer}</span>}
+          {latest && (
+            <button
+              className="update-btn"
+              onClick={() => openExternal(RELEASES_URL)}
+              title={`有新版本 v${latest}，点击前往下载`}
+            >
+              <Icon icon="lucide:download" />
+              <span>新版本 v{latest}</span>
+            </button>
+          )}
+        </div>
       </div>
     </aside>
   );

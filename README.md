@@ -28,9 +28,11 @@
 ## 与原版相比的优化
 
 ### 1. 中文模糊搜索
-- 新增本地词典 `public/zh-dict.json`（1000+ 词条 / 1900+ 中文词），覆盖常用概念、动物、水果蔬菜、运动、运动器械、建筑、地标、家电、医疗、几何形状、AI/机器人、自然、载具、人物表情等数十个分类
-- 新增 `src/lib/zhSearch.ts`：CJK 自动检测、词典懒加载、整句/子串/片段三级匹配回退
+- 内置本地词典 `public/zh-dict.json`（**5000+ 词条 / 6300+ 中文词**），覆盖人物、发型美妆、服饰穿搭、动物、食物饮品、家居、出行交通、运动、音乐艺术、办公学习、科技数码、医疗健康、购物金融、自然地理、建筑场所、娱乐节日、国家城市、军事安全、时间历法等数十个大类
+- 新增 `src/lib/zhSearch.ts`：CJK 自动检测、词典懒加载、精确/正向/反向三级匹配回退（搜「箭头」能联想到左箭头/右上箭头/双箭头）
+- 品牌词支持：搜 gpt/支付宝/抖音/微信 等直接展开对应图标
 - 输入中文时按词条翻译成英文检索词，并发调用 Iconify `search` API 并集去重
+- **库中无对应英文的词条自动跳过**：所有词典词条都经过 Iconify 全库 34,000+ 英文词段白名单验证，确保搜得出结果
 <img width="1596" height="1017" alt="1" src="https://github.com/user-attachments/assets/3078d29e-6382-4a84-afbe-50aeec7a1728" />
 
 ### 2. 库内 OneBox 风格搜索
@@ -49,6 +51,27 @@
 - 默认尺寸由 18px 改为 24px
 - 修复原版输入 Bug：18px → 输入 24 会变成 44（每键即 clamp 误导）；Padding/旋转 输入 80 会变成 080（前导零未清）。改用本地文本状态、blur 时夹紧、`stripLeadingZeros` 清前导零
 <img width="1596" height="1017" alt="3" src="https://github.com/user-attachments/assets/151b8443-45a7-41cf-8bc4-9a2da179140f" />
+
+### 5. 结果相关度重排
+- 新增 `src/lib/rank.ts`：搜索结果按「精确词条 > 去变体精确 > 前缀 > 独立词段 > 子串」五档打分，叠加查询词位置加成
+- 修复 Iconify 自身把 `video-camera` 排在纯 `camera` 前面、英文单词搜索无重排的问题；首屏永远是相关度最高的图标
+
+### 6. 品牌词与生活化大类
+- 内置 50+ 品牌词条：gpt/chatgpt/openai、alipay、wechat/wechat-pay、qq、tiktok/douyin、bilibili、taobao、jd、pinduoduo、meituan、eleme、didi、twitter/facebook/instagram、paypal、apple-pay、bitcoin/ethereum 等
+- 生活化大类经 Iconify 全库词段白名单验证后入库：美女/发型/化妆/服饰/动物/食物/城市/节日/医疗/科技/金融等，搜「火锅」「春节」「扫地机器人」「伦敦」都有结果
+
+### 7. 左下角版本检测
+- 侧边栏左下角显示当前版本号；有新版本时显示「新版本 vX.Y.Z」按钮，点击跳转 GitHub Releases 下载页
+- 由 GitHub API 拉取最新 tag 对比，失败时静默只显示版本号
+
+## 词典维护脚本
+
+词典由脚本可复现地生成/扩充，全部在 `scripts/` 下：
+
+- `gen-dict.mjs`：反推 Iconify top 集合图标名 → 高频词段 → 用 `zh-root.json` 词根表翻译合并入库
+- `build-whitelist.mjs`：拉取 Iconify 全库 236 集合图标名，构建 34,000+ 真实英文词段白名单
+- `apply-map.mjs` / `fixup-map.mjs` / `backfill-from-root.mjs`：中文词 → 候选英文段映射，验证白名单后入库（库中无对应英文的词自动跳过）
+- `audit-coverage.mjs` / `audit-report.mjs`：词典覆盖度盘点，生成未覆盖类目 HTML 报告
 
 
 ## Tech

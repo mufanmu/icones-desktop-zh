@@ -1,12 +1,13 @@
 {
   "name": "icones-desktop",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "gen-dict": "node scripts/gen-dict.mjs",
     "tauri": "tauri",
     "tauri:build": "tauri build",
     "tauri:build:universal": "tauri build --target universal-apple-darwin",
