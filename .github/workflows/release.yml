@@ -94,16 +94,32 @@ jobs:
     needs: [build-macos-universal, build-windows]
     runs-on: ubuntu-latest
     steps:
-      # GitHub 的 releases/latest 按 tag 指向的 commit 时间排序而非发布时间，
-      # 且 tauri-action 不设置 make_latest，故显式把本次发布标记为 latest。
-      - name: Mark release as latest + publish draft
+      # 背景：mac/win 两个并行 job 的 tauri-action 可能各创建一个草稿 release（竞争条件），
+      # 且 GitHub 的 releases/latest 按 commit 时间排序而非发布时间、tauri-action 不设 make_latest。
+      # 故这里统一收口：保留第一个 release，把其余重复 release 的资产搬到主 release 后删除，
+      # 再分两步发布（先 draft=false，再单独 make_latest=true——两者同一次 PATCH 时 make_latest 会被忽略）。
+      - name: Deduplicate, publish & mark latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          id=$(gh api "repos/${{ github.repository }}/releases?per_page=10" \
-            --jq ".[] | select(.tag_name==\"${{ github.ref_name }}\") | .id")
-          # 分两步：先发布草稿，再单独标记 latest（两者同一次 PATCH 时 make_latest 会被忽略）
-          gh api -X PATCH "repos/${{ github.repository }}/releases/$id" \
+          repo="${{ github.repository }}"
+          tag="${{ github.ref_name }}"
+          ids=$(gh api "repos/$repo/releases?per_page=10" --jq ".[] | select(.tag_name==\"$tag\") | .id")
+          main=$(echo "$ids" | head -1)
+          # 把重复 release 的资产搬到主 release（asset 上传走 uploads.github.com）
+          for dup in $(echo "$ids" | tail -n +2); do
+            for aid in $(gh api "repos/$repo/releases/$dup/assets" --jq '.[].id'); do
+              name=$(gh api "repos/$repo/releases/$dup/assets/$aid" --jq '.name')
+              gh api -H "Accept: application/octet-stream" "repos/$repo/releases/assets/$aid" > "/tmp/$name" 2>/dev/null
+              curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary "@/tmp/$name" \
+                "https://uploads.github.com/repos/$repo/releases/$main/assets?name=$name" >/dev/null
+            done
+            gh api -X DELETE "repos/$repo/releases/$dup" >/dev/null
+            echo "removed duplicate release $dup"
+          done
+          gh api -X PATCH "repos/$repo/releases/$main" \
             -f draft=false | jq -r '"published: " + .published_at + " tag: " + .tag_name'
-          gh api -X PATCH "repos/${{ github.repository }}/releases/$id" \
+          gh api -X PATCH "repos/$repo/releases/$main" \
             -f make_latest=true >/dev/null
