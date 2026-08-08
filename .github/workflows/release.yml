@@ -14,6 +14,8 @@ name: Release
 #   https://github.com/mufanmu/icones-desktop-zh/releases/latest/download/Icones-windows.exe
 # 注意：带版本号的产物名（Icones_0.1.4_universal.dmg）里的版本号会变，
 # 因此 latest/download 不能直接用版本号资产名；固定名副本是「永远最新」的下载入口。
+# 最新 release 只保留固定名资产（上传后删除带版本号的）；历史版本保留版本号资产供回退。
+# 发布后需显式 make_latest=true（否则 releases/latest 可能按 commit 时间指向旧版）。
 on:
   push:
     tags:
@@ -58,7 +60,7 @@ jobs:
           releaseDraft: true
           prerelease: false
 
-      - name: Upload fixed-name .dmg (latest/download entry)
+      - name: Upload fixed-name .dmg & clean versioned asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -66,6 +68,8 @@ jobs:
           echo "found: $dmg"
           cp "$dmg" "Icones-macos.dmg"
           gh release upload "${{ github.ref_name }}" "Icones-macos.dmg" --clobber
+          # 最新 release 只保留固定名资产，删掉带版本号的（历史版本仍有版本号资产可回退）
+          gh release delete-asset "${{ github.ref_name }}" "$(basename "$dmg")" --yes
 
   build-windows:
     runs-on: windows-latest
@@ -100,7 +104,7 @@ jobs:
           releaseDraft: true
           prerelease: false
 
-      - name: Upload fixed-name .exe (latest/download entry)
+      - name: Upload fixed-name .exe & clean versioned asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -108,3 +112,20 @@ jobs:
           echo "found: $exe"
           copy "$exe" "Icones-windows.exe"
           gh release upload "${{ github.ref_name }}" "Icones-windows.exe" --clobber
+          # 最新 release 只保留固定名资产，删掉带版本号的（历史版本仍有版本号资产可回退）
+          gh release delete-asset "${{ github.ref_name }}" "$(basename "$exe")" --yes
+
+  finalize:
+    needs: [build-macos-universal, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      # GitHub 的 releases/latest 按 tag 指向的 commit 时间排序而非发布时间，
+      # 且 tauri-action 不设置 make_latest，故显式把本次发布标记为 latest。
+      - name: Mark release as latest + publish draft
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          id=$(gh api "repos/${{ github.repository }}/releases?per_page=10" \
+            --jq ".[] | select(.tag_name==\"${{ github.ref_name }}\") | .id")
+          gh api -X PATCH "repos/${{ github.repository }}/releases/$id" \
+            -f make_latest=true -f draft=false | jq -r '"published: " + .published_at + " tag: " + .tag_name'
