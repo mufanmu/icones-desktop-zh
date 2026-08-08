@@ -1,4 +1,8 @@
+import { useCallback, useEffect, useRef } from "react";
 import { Icon } from "@iconify/react";
+
+// 预加载提前量:哨兵距视口底部 800px 内即触发下一批
+const SENTINEL_MARGIN = 800;
 
 interface Props {
   icons: string[]; // full "prefix:name"
@@ -7,6 +11,7 @@ interface Props {
   onSelect: (name: string) => void;
   gridSize: number;
   loading: boolean;
+  loadingMore?: boolean;
   onLoadMore?: () => void;
   emptyHint?: string;
 }
@@ -18,6 +23,7 @@ export function IconGrid({
   onSelect,
   gridSize,
   loading,
+  loadingMore,
   onLoadMore,
   emptyHint,
 }: Props) {
@@ -39,6 +45,46 @@ export function IconGrid({
   }
 
   const iconPx = Math.round(gridSize * 0.4);
+  const hasMore = icons.length > 0 && icons.length < total;
+
+  // 无限滚动:底部 1px 哨兵进入视口(底部提前 SENTINEL_MARGIN px)即加载下一批。
+  // root 用默认 viewport:主内容滚动容器 .content 即窗口可视区,
+  // IntersectionObserver 会按祖先 overflow 裁剪正确计算交集。
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // 哨兵是否落在预加载扩展区内(与 IO rootMargin 语义一致)
+  const sentinelInView = useCallback(() => {
+    const el = sentinelRef.current;
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.top <= window.innerHeight + SENTINEL_MARGIN && rect.bottom >= 0;
+  }, []);
+
+  // 滚动触发:交叉状态变化(进入/离开扩展区)时回调。
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore?.();
+      },
+      { rootMargin: `0px 0px ${SENTINEL_MARGIN}px 0px`, threshold: 0 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, onLoadMore]);
+
+  // 数据更新后复查:一批增量不足以把哨兵推出扩展区时,IO 不会再有状态变化,
+  // 加载会卡在"1,200 of 2,000"——这里在每次渲染后主动检查,若哨兵仍在
+  // 扩展区内则继续加载,直到填满视口或 hasMore 结束。App 层 ref 锁保证链式
+  // 加载每次只进一批(锁在搜索 effect 的 finally 释放)。
+  useEffect(() => {
+    if (!hasMore) return;
+    const raf = requestAnimationFrame(() => {
+      if (sentinelInView()) onLoadMore?.();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [icons.length, hasMore, onLoadMore, sentinelInView]);
 
   return (
     <div className="grid-wrap">
@@ -58,18 +104,18 @@ export function IconGrid({
         ))}
       </div>
 
-      {icons.length < total && (
+      {hasMore && (
         <div className="grid-footer">
           <span>
             Showing {icons.length.toLocaleString()} of {total.toLocaleString()}
           </span>
-          {onLoadMore && (
-            <button className="ghost-btn wide" onClick={onLoadMore}>
-              Load more
-            </button>
+          {loadingMore && (
+            <Icon icon="svg-spinners:90-ring-with-bg" className="spinner-sm" />
           )}
         </div>
       )}
+      {/* 哨兵始终渲染;observer 仅在 hasMore 时建立,加载完自动停止 */}
+      <div ref={sentinelRef} className="grid-sentinel" aria-hidden="true" />
     </div>
   );
 }

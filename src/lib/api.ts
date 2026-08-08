@@ -85,44 +85,86 @@ export async function searchIcons(query: string, limit = 120): Promise<SearchRes
   return { icons, total: data.total ?? icons.length };
 }
 
-// 联合搜索：对一组英文检索词并发查询，合并去重结果。
-// 用于中文输入经 zh-dict 翻译后的多关键词场景。
+// 联合搜索：主词（primary）与模糊词条（fuzzy）取全量并 round-robin 交错合并，
+// 联想词（secondary，类目混合词条）每词仅取前几个补充——保证主词结果占绝对多数，
+// 又不砍掉 fuzzy 场景（「首页/箭头」等）的结果量。
+// 用于中文输入经 zh-dict 翻译后的多关键词场景（见 zhSearch.translateChineseFull）。
+//
+// 注意：Iconify search API 的 limit 参数最小值为 32（实测 limit=1/5/13 均返回 32+），
+// 均分配额策略实际失效（每个词都返回全量），因此这里改为主词/fuzzy 全量 + 联想限量。
+// 合并结果不按 limit 截断（仅防爆上限 MAX_MERGE），由 App 端 visible 分页显示——
+// 这样中文并集搜索的「加载更多」才有效（旧实现 slice(0,limit) 把结果锁死在 200）。
+const MAX_MERGE = 2000;
 export async function searchIconsMulti(
-  queries: string[],
+  primary: string[],
+  secondary: string[] = [],
+  fuzzy: string[] = [],
   limit = 120,
 ): Promise<SearchResult> {
-  const qs = queries.map((s) => s.trim()).filter(Boolean);
-  if (qs.length === 0) return { icons: [], total: 0 };
-  if (qs.length === 1) return searchIcons(qs[0], limit);
+  const p = primary.map((s) => s.trim()).filter(Boolean);
+  const s = secondary.map((s) => s.trim()).filter(Boolean);
+  const f = fuzzy.map((s) => s.trim()).filter(Boolean);
+  if (p.length === 0 && s.length === 0 && f.length === 0) return { icons: [], total: 0 };
+  if (p.length + s.length + f.length === 1) {
+    const q = p[0] ?? s[0] ?? f[0];
+    return searchIcons(q, limit);
+  }
 
-  // 配额策略：翻译词少（≤5，通常前几个是精确命中、高相关）时每词直接取满 limit，
-  // 避免均分导致主词（如「相机」→ camera）配额不足、结果被弱相关词挤占变少。
-  // 翻译词多（>5，模糊扩展场景）时仍均分，控制请求量与合并成本。
-  const per = qs.length <= 5 ? limit : Math.max(8, Math.ceil(limit / qs.length));
-  const results = await Promise.all(
-    qs.map(async (q) => {
+  // 主词 + fuzzy：每词取满 limit（API 实际返回全量/clamp 32），
+  // round-robin 轮转交错合并，避免单个词的结果整块霸屏。
+  const primaryResults = await Promise.all(
+    p.map(async (q) => {
       try {
-        return await searchIcons(q, per);
+        return await searchIcons(q, limit);
       } catch {
         return { icons: [], total: 0 };
       }
     }),
   );
+  const fuzzyResults = await Promise.all(
+    f.map(async (q) => {
+      try {
+        return await searchIcons(q, limit);
+      } catch {
+        return { icons: [], total: 0 };
+      }
+    }),
+  );
+  // 联想词：每词仅取前 4 个（如搜「香蕉」→ 联想 fruit/apple 各 4 个），顺序追加。
+  const secondaryResults = await Promise.all(
+    s.map(async (q) => {
+      try {
+        return (await searchIcons(q, 4)).icons.slice(0, 4);
+      } catch {
+        return [];
+      }
+    }),
+  );
 
-  // Round-robin 轮转交错合并：第 i 轮每个词各取第 i 条结果，交错入列。
-  // 避免首个检索词的结果整块霸屏——各词的 top 结果均匀露出首屏，
-  // 而翻译词顺序（zhSearch 按专一度排序）仍决定同一轮内的先后。
   const seen = new Set<string>();
   const merged: string[] = [];
-  const maxLen = Math.max(...results.map((r) => r.icons.length));
-  for (let i = 0; i < maxLen; i++) {
-    for (const r of results) {
-      const name = r.icons[i];
-      if (name && !seen.has(name)) {
+  const mergeRoundRobin = (results: { icons: string[] }[]) => {
+    const maxLen = Math.max(...results.map((r) => r.icons.length));
+    for (let i = 0; i < maxLen; i++) {
+      for (const r of results) {
+        const name = r.icons[i];
+        if (name && !seen.has(name)) {
+          seen.add(name);
+          merged.push(name);
+        }
+      }
+    }
+  };
+  mergeRoundRobin(primaryResults);
+  mergeRoundRobin(fuzzyResults);
+  for (const icons of secondaryResults) {
+    for (const name of icons) {
+      if (!seen.has(name)) {
         seen.add(name);
         merged.push(name);
       }
     }
   }
-  return { icons: merged.slice(0, limit), total: merged.length };
+  const icons = merged.slice(0, MAX_MERGE);
+  return { icons, total: icons.length };
 }

@@ -632,6 +632,17 @@ select {
   font-size: 13px;
 }
 
+/* 无限滚动:底部 1px 哨兵,进入视口触发加载下一批 */
+.grid-sentinel {
+  height: 1px;
+}
+
+/* 增量加载中的小 spinner */
+.spinner-sm {
+  font-size: 16px;
+  color: var(--text-dim);
+}
+
 .grid-state {
   height: 60vh;
   display: flex;

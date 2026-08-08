@@ -12,7 +12,7 @@ import {
   type CollectionMeta,
 } from "./lib/api";
 import { detectVariants, matchesVariant } from "./lib/variants";
-import { isChinese, loadDict, translateChinese, filterCountryIconsForTerms, isCountryCode } from "./lib/zhSearch";
+import { isChinese, loadDict, translateChineseFull, filterCountryIconsForTerms, isCountryCode } from "./lib/zhSearch";
 import { rankIconsByRelevance } from "./lib/rank";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
@@ -36,6 +36,11 @@ export default function App() {
   const [limit, setLimit] = useState(PAGE);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+
+  // 无限滚动:主内容滚动容器引用 + 增量加载状态 + 防重复触发锁
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMoreLock = useRef(false);
 
   const [palette, setPalette] = useState<PaletteFilter>("all");
   const [gridSize, setGridSize] = useState(56);
@@ -83,46 +88,81 @@ export default function App() {
     setLoading(true);
 
     const run = async () => {
-      if (searching) {
+      try {
+        if (searching) {
         if (scopePill) {
           // 库内本地过滤；中文先翻译成英文检索词再匹配图标名
           const q = query.trim();
-          let terms: string[];
+          let primary: string[];
+          let secondary: string[];
+          let fuzzy: string[];
           if (isChinese(q)) {
             await loadDict();
-            terms = translateChinese(q);
+            const plan = translateChineseFull(q);
+            primary = plan.primary;
+            secondary = plan.secondary;
+            fuzzy = plan.fuzzy;
           } else {
-            terms = [q];
+            primary = [q];
+            secondary = [];
+            fuzzy = [];
           }
-          const lowerTerms = terms.map((t) => t.toLowerCase());
+          const lowerPrimary = primary.map((t) => t.toLowerCase());
+          const lowerSecondary = secondary.map((t) => t.toLowerCase());
+          const lowerFuzzy = fuzzy.map((t) => t.toLowerCase());
+          const lowerTerms = [...lowerPrimary, ...lowerSecondary, ...lowerFuzzy];
           const hasCountry = lowerTerms.some(isCountryCode);
-          const filtered =
-            lowerTerms.length === 0
-              ? []
-              : allIcons.filter((full) => {
-                  const [prefix, rawName] = full.split(":");
-                  const name = rawName.toLowerCase();
-                  return lowerTerms.some((t) => {
-                    if (isCountryCode(t)) {
-                      // 国旗精确匹配：短码严格等 或 flag 库带尺寸后缀；仅国旗库
-                      const head = name.split("-")[0];
-                      if (head !== t) return false;
-                      if (name === t) return ["cif", "circle-flags", "flag", "flagpack"].includes(prefix);
-                      if (prefix === "flag") {
-                        const parts = name.split("-");
-                        return parts.length === 2 && ["1x1", "4x3"].includes(parts[1]);
-                      }
-                      return false;
-                    }
-                    // 普通词仍 includes；若词条里混入了国家Flag短码就当作FlagFlag看，已经返
-                    // 防止 includes(t) 与"国" 视觉上误吃其它国旗
-                    if (hasCountry) {
-                      const head = name.split("-")[0];
-                      return head === t || name === t;
-                    }
-                    return name.includes(t);
-                  });
-                });
+          const matchesTerm = (full: string, t: string): boolean => {
+            const [prefix, rawName] = full.split(":");
+            const name = rawName.toLowerCase();
+            if (isCountryCode(t)) {
+              // 国旗精确匹配：短码严格等 或 flag 库带尺寸后缀；仅国旗库
+              const head = name.split("-")[0];
+              if (head !== t) return false;
+              if (name === t) return ["cif", "circle-flags", "flag", "flagpack"].includes(prefix);
+              if (prefix === "flag") {
+                const parts = name.split("-");
+                return parts.length === 2 && ["1x1", "4x3"].includes(parts[1]);
+              }
+              return false;
+            }
+            // 普通词仍 includes；若词条里混入了国家Flag短码就当作FlagFlag看，已经返
+            // 防止 includes(t) 与"国" 视觉上误吃其它国旗
+            if (hasCountry) {
+              const head = name.split("-")[0];
+              return head === t || name === t;
+            }
+            return name.includes(t);
+          };
+          // 主词 + fuzzy 全量过滤（主导，fuzzy 恢复旧规模不被砍短）；
+          // 联想词（类目混合词条）限量补充（每词前几个，总量 ≤12）。
+          // 无主词且无 fuzzy（纯联想场景）时退化为全量过滤，避免结果被砍。
+          let filtered: string[];
+          const coreTerms = [...lowerPrimary, ...lowerFuzzy];
+          if (coreTerms.length > 0) {
+            const coreFiltered = allIcons.filter((full) =>
+              coreTerms.some((t) => matchesTerm(full, t)),
+            );
+            const seen = new Set(coreFiltered);
+            const extra: string[] = [];
+            for (const t of lowerSecondary) {
+              if (extra.length >= 12) break;
+              for (const full of allIcons) {
+                if (seen.has(full)) continue;
+                if (matchesTerm(full, t)) {
+                  seen.add(full);
+                  extra.push(full);
+                }
+                if (extra.length >= 12) break;
+              }
+            }
+            filtered = [...coreFiltered, ...extra];
+          } else {
+            filtered =
+              lowerTerms.length === 0
+                ? []
+                : allIcons.filter((full) => lowerTerms.some((t) => matchesTerm(full, t)));
+          }
           if (!alive) return;
           // 相关度重排：名字精确/前缀/独立段匹配优先于纯子串（如 camera > camera-off > video-camera）
           setNames(rankIconsByRelevance(filtered, lowerTerms));
@@ -134,15 +174,16 @@ export default function App() {
           let terms: string[] = [];
           if (zh) {
             await loadDict();
-            terms = translateChinese(query);
-            r = await searchIconsMulti(terms, limit);
+            const plan = translateChineseFull(query);
+            terms = [...plan.primary, ...plan.secondary, ...plan.fuzzy];
+            r = await searchIconsMulti(plan.primary, plan.secondary, plan.fuzzy, limit);
           } else {
             // 英文输入也先查字典：品牌词（gpt/wechat/alipay）等能映射到词典词条做多词扩展
             await loadDict();
-            const expanded = translateChinese(query);
-            if (expanded.length > 0) {
-              terms = expanded;
-              r = await searchIconsMulti(expanded, limit);
+            const plan = translateChineseFull(query);
+            if (plan.primary.length > 0 || plan.secondary.length > 0 || plan.fuzzy.length > 0) {
+              terms = [...plan.primary, ...plan.secondary, ...plan.fuzzy];
+              r = await searchIconsMulti(plan.primary, plan.secondary, plan.fuzzy, limit);
             } else {
               terms = [query.trim()];
               r = await searchIcons(query, limit);
@@ -169,7 +210,15 @@ export default function App() {
         setNames([]);
         setTotal(0);
       }
-      if (alive) setLoading(false);
+      } finally {
+        // 无论成功/失败/中止都复位增量加载态并释放锁;旧的 run(alive=false)跳过,
+        // 保证锁只由最新一次请求释放
+        if (alive) {
+          setLoading(false);
+          setLoadingMore(false);
+          loadMoreLock.current = false;
+        }
+      }
     };
 
     const t = setTimeout(run, searching && !scopePill ? 220 : 0);
@@ -183,6 +232,8 @@ export default function App() {
   useEffect(() => {
     setLimit(PAGE);
     setVariant(null);
+    // 上下文切换后回顶,避免停在上一个结果集的底部
+    contentRef.current?.scrollTo({ top: 0 });
   }, [query, activePrefix, scopePill]);
 
   useEffect(() => setLimit(PAGE), [variant]);
@@ -279,6 +330,15 @@ export default function App() {
     setSelected(null);
   }, []);
 
+  // 无限滚动:滚动到底部附近由哨兵触发,每批累加 PAGE;ref 锁防重复触发,
+  // 锁在搜索 effect 的 finally 中释放(见上方 run)
+  const handleLoadMore = useCallback(() => {
+    if (loadMoreLock.current) return;
+    loadMoreLock.current = true;
+    setLoadingMore(true);
+    setLimit((l) => l + PAGE);
+  }, []);
+
   return (
     <div className="app">
       {/* Overlay 标题栏：内容顶到窗口顶部，需显式全宽拖拽条，否则顶部无法拖动窗口。
@@ -310,7 +370,7 @@ export default function App() {
           onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         />
 
-        <div className="content">
+        <div className="content" ref={contentRef}>
           <VariantBar variants={variants} active={variant} onSelect={setVariant} />
           <IconGrid
             icons={visible}
@@ -319,7 +379,8 @@ export default function App() {
             onSelect={setSelected}
             gridSize={gridSize}
             loading={loading}
-            onLoadMore={() => setLimit((l) => l + PAGE)}
+            loadingMore={loadingMore}
+            onLoadMore={handleLoadMore}
             emptyHint={
               searching
                 ? scopePill

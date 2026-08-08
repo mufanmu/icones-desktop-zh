@@ -7,10 +7,18 @@ export interface DictEntry {
   _cn?: boolean; // 标记中国相关词条（含台港澳）：互搜"中国"时一并展开
 }
 
+// 词典词条保留边界：同一中文词可命中多个词条（专属词条 + 类目混合词条）。
+// ens 独立保存，翻译时才能区分「主词」（专属，如 香蕉→[banana]）与「联想词」
+// （类目，如 水果→15 个 en）——避免搜「香蕉」被类目词条平级带入 15 个水果
+// 检索词、结果被水果大全淹没（v0.1.5 回归根因）。
+interface ZhEntry {
+  ens: string[];
+  cn: boolean;
+}
+
 let dictCache: DictEntry[] | null = null;
-let zhIndex: Map<string, string[]> | null = null; // zh term -> en terms
+let zhIndex: Map<string, ZhEntry[]> | null = null; // zh term -> 命中的词条列表
 let cnTermsCache: string[] | null = null; // 中国相关全部英文码集合
-let zhCnTerms: Set<string> | null = null; // 属于 _cn 词条的中文词集合（快速判断国旗归类）
 
 const CJK = /[\u4e00-\u9fff]/;
 const FLAG_PREFIXES = new Set(["cif", "circle-flags", "flag", "flagpack"]);
@@ -19,6 +27,8 @@ const FLAG_SIZE_SUFFIX = new Set(["1x1", "4x3"]); // flag 库的尺寸后缀白�
 // 模糊关联的规模控制：避免反向匹配把词条/检索词数量引爆（每个英文词都会触发一次 API 请求）
 const MAX_FUZZY_ENTRIES = 14; // 非精确命中的词条上限（按相关度评分取前 N）
 const MAX_TERMS = 24; // 最终翻译出的英文检索词上限
+const MAX_SECONDARY_ENTRIES = 2; // exact 命中的类目混合词条最多取前 N 个（联想）
+const MAX_SECONDARY_PER = 2; // 每个类目混合词条最多取前 N 个 en（联想）
 
 export function isChinese(q: string): boolean {
   return CJK.test(q);
@@ -31,16 +41,15 @@ export async function loadDict(): Promise<DictEntry[]> {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`dict http ${res.status}`);
     const data = (await res.json()) as DictEntry[];
-    zhIndex = new Map<string, string[]>();
-    zhCnTerms = new Set<string>();
+    zhIndex = new Map<string, ZhEntry[]>();
     cnTermsCache = [];
     for (const e of data) {
       for (const zh of e.zh) {
         const norm = zh.trim();
         if (!norm) continue;
+        const entry: ZhEntry = { ens: e.en, cn: !!e._cn };
         const prev = zhIndex.get(norm);
-        zhIndex.set(norm, prev ? [...prev, ...e.en] : [...e.en]);
-        if (e._cn) zhCnTerms.add(norm);
+        zhIndex.set(norm, prev ? [...prev, entry] : [entry]);
       }
       if (e._cn) cnTermsCache.push(...e.en);
     }
@@ -50,7 +59,6 @@ export async function loadDict(): Promise<DictEntry[]> {
     console.error("[zh-dict] load failed:", err);
     dictCache = [];
     zhIndex = new Map();
-    zhCnTerms = new Set();
     cnTermsCache = [];
     return [];
   }
@@ -69,9 +77,21 @@ interface ZhHit {
   cn: boolean;
 }
 
-export function translateChinese(query: string): string[] {
+// 翻译计划：
+//   primary   = 主词（专属词条，搜索结果应占绝对多数，取全量）
+//   secondary = 类目混合词条联想（如 搜香蕉→水果词条的 fruit/apple，限量）
+//   fuzzy     = forward/reverse 模糊词条（「首页→home-2/home-3」「箭头→arrow-left」，
+//               是常用词结果的主要来源，必须取全量，否则结果会被砍短）
+export interface TranslationPlan {
+  primary: string[];
+  secondary: string[];
+  fuzzy: string[];
+}
+
+export function translateChineseFull(query: string): TranslationPlan {
   const q = query.trim();
-  if (!q || !zhIndex) return [];
+  const none: TranslationPlan = { primary: [], secondary: [], fuzzy: [] };
+  if (!q || !zhIndex) return none;
 
   // 纯英文/数字查询（如 gpt、alipay、visa）：只做词条精确匹配，
   // 不做 forward/reverse 子串模糊——避免 "pay" 反向命中 "paypal"、"car" 命中 "card" 等污染。
@@ -81,19 +101,17 @@ export function translateChinese(query: string): string[] {
   const forward: ZhHit[] = [];
   const reverse: ZhHit[] = [];
 
-  const isCn = (zh: string) => zhCnTerms?.has(zh) ?? false;
-
   const matchAgainst = (text: string, minReverseLen: number) => {
-    for (const [zh, ens] of zhIndex!.entries()) {
+    for (const [zh, entries] of zhIndex!.entries()) {
       // 精确匹配：纯英文查询不区分大小写（"QQ" 命中词条 "qq"）
       if (zh === text || (pureAscii && zh.toLowerCase() === text.toLowerCase())) {
-        exact.push({ zh, ens, score: 100 + zh.length, cn: isCn(zh) });
+        for (const e of entries) exact.push({ zh, ens: e.ens, score: 100 + zh.length, cn: e.cn });
       } else if (!pureAscii && zh.length >= 2 && text.includes(zh)) {
-        forward.push({ zh, ens, score: 50 + zh.length * 2, cn: isCn(zh) });
+        for (const e of entries) forward.push({ zh, ens: e.ens, score: 50 + zh.length * 2, cn: e.cn });
       } else if (!pureAscii && text.length >= minReverseLen && zh.includes(text) && zh !== text) {
         // 关联度 = 查询词在词条中的占比，占比越高越相关（"箭头"之于「左箭头」高于之于「向上箭头图标」）
         const ratio = text.length / zh.length;
-        reverse.push({ zh, ens, score: 10 + ratio * 30, cn: isCn(zh) });
+        for (const e of entries) reverse.push({ zh, ens: e.ens, score: 10 + ratio * 30, cn: e.cn });
       }
     }
   };
@@ -121,26 +139,63 @@ export function translateChinese(query: string): string[] {
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_FUZZY_ENTRIES);
 
-  // 4) 专一度优先：exact 命中中单义词条（如纯 ["camera"]）排在混合词条
-  //    （如 ["video","camera","film"]）之前，保证翻译词顺序 = 相关度顺序，
-  //    避免混合词条里排在首位的泛义词（video）污染首屏。
-  exact.sort((a, b) => a.ens.length - b.ens.length);
+  // 4) 分层：exact 命中中 ens 最短的词条组 = 主词（专属词条，如 香蕉→[banana]）；
+  //    更长的词条 = 类目混合词条（如 水果→15 个 en），只取少量作联想。
+  //    避免搜「香蕉」被类目词条平级带入 15 个水果检索词、结果被水果大全淹没。
+  let primaryHits: ZhHit[] = [];
+  let secondaryHits: ZhHit[] = [];
+  if (exact.length > 0) {
+    const minLen = Math.min(...exact.map((h) => h.ens.length));
+    primaryHits = exact
+      .filter((h) => h.ens.length === minLen)
+      .sort((a, b) => a.ens.length - b.ens.length);
+    secondaryHits = exact.filter((h) => h.ens.length > minLen);
+  }
 
-  // 5) 合并检索词：精确命中最优先，其次高关联词条；总数封顶。
-  const out = new Set<string>();
+  // 5) 合并检索词：主词全部优先；类目混合词条限量（联想）；fuzzy 全量；总数封顶。
+  const primary = new Set<string>();
+  const secondary = new Set<string>();
+  const fuzzyOut = new Set<string>();
   let hitCn = false;
-  for (const hit of [...exact, ...fuzzy]) {
-    if (hit.cn) hitCn = true;
-    for (const en of hit.ens) {
-      if (out.size >= MAX_TERMS) break;
-      out.add(en);
+  const total = () => primary.size + secondary.size + fuzzyOut.size;
+  const add = (set: Set<string>, ens: string[], max: number | null) => {
+    const list = max === null ? ens : ens.slice(0, max);
+    for (const en of list) {
+      if (total() >= MAX_TERMS) break;
+      // 联想词与主词重复时跳过（如「苹果」的混合词条含 apple），避免无谓的 API 请求
+      if (set === secondary && primary.has(en)) continue;
+      set.add(en);
+    }
+  };
+  for (const h of primaryHits) {
+    if (h.cn) hitCn = true;
+    add(primary, h.ens, null);
+  }
+  for (const h of secondaryHits.slice(0, MAX_SECONDARY_ENTRIES)) {
+    if (h.cn) hitCn = true;
+    add(secondary, h.ens, MAX_SECONDARY_PER);
+  }
+  for (const h of fuzzy) {
+    if (h.cn) hitCn = true;
+    add(fuzzyOut, h.ens, null);
+  }
+
+  // 台港澳归类：命中任一中国相关词条 → 全部码并入主词
+  // （国旗搜索必须取全量，不能走联想限量，否则各国家码只出前几个旗帜）。
+  if (hitCn && cnTermsCache) {
+    for (const en of cnTermsCache) {
+      if (total() >= MAX_TERMS) break;
+      primary.add(en);
     }
   }
 
-  // 台港澳归类：命中任一中国相关词条 → 一并加入全部码
-  if (hitCn && cnTermsCache) for (const en of cnTermsCache) out.add(en);
+  return { primary: [...primary], secondary: [...secondary], fuzzy: [...fuzzyOut] };
+}
 
-  return [...out];
+// 兼容入口：全部检索词按相关度拼接（主词在前、联想词、fuzzy 在后）。
+export function translateChinese(query: string): string[] {
+  const { primary, secondary, fuzzy } = translateChineseFull(query);
+  return [...primary, ...secondary, ...fuzzy];
 }
 
 // ISO 3166-1 alpha-2 国家/地区码全集。国旗库（circle-flags/flag/cif/flagpack）均以两字母码命名，
