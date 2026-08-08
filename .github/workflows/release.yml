@@ -102,5 +102,8 @@ jobs:
         run: |
           id=$(gh api "repos/${{ github.repository }}/releases?per_page=10" \
             --jq ".[] | select(.tag_name==\"${{ github.ref_name }}\") | .id")
+          # 分两步：先发布草稿，再单独标记 latest（两者同一次 PATCH 时 make_latest 会被忽略）
           gh api -X PATCH "repos/${{ github.repository }}/releases/$id" \
-            -f make_latest=true -f draft=false | jq -r '"published: " + .published_at + " tag: " + .tag_name'
+            -f draft=false | jq -r '"published: " + .published_at + " tag: " + .tag_name'
+          gh api -X PATCH "repos/${{ github.repository }}/releases/$id" \
+            -f make_latest=true >/dev/null
