@@ -6,6 +6,17 @@ export const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
 
 const GITHUB_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 
+/** fetch 带超时：国内访问 api.github.com 常超时/被墙，避免请求无限挂起。 */
+async function fetchWithTimeout(url: string, ms = 8000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal, redirect: "follow" });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 版本号比较：去 v 前缀后按数字主段逐段比较。a > b 返回正数，a < b 返回负数。 */
 export function compareVersions(a: string, b: string): number {
   const pa = (a || "").replace(/^v/i, "").split(".").map((s) => parseInt(s, 10) || 0);
@@ -40,11 +51,9 @@ export async function getAppVersion(): Promise<string> {
 }
 
 /** 查询 GitHub 最新 release 版本号（tag_name 去 v 前缀）。任何失败（无 release/限流/断网）返回 null。 */
-export async function fetchLatestRelease(): Promise<string | null> {
+async function latestFromApi(): Promise<string | null> {
   try {
-    const res = await fetch(GITHUB_API, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
+    const res = await fetchWithTimeout(GITHUB_API, 8000);
     if (!res.ok) return null;
     const data = (await res.json()) as { tag_name?: string };
     if (!data.tag_name) return null;
@@ -52,6 +61,42 @@ export async function fetchLatestRelease(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** 兜底源1：github.com 网页 releases/latest，跟随重定向后从最终 URL 提取 tag。
+ *  国内 api.github.com 常被墙但 github.com 网页通常可访问，用它做 fallback。 */
+async function latestFromWeb(): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(`https://github.com/${REPO}/releases/latest`, 8000);
+    const m = res.url.match(/\/releases\/tag\/([^/?]+)/);
+    if (m) return m[1].replace(/^v/i, "");
+    const html = await res.text();
+    const m2 = html.match(/releases\/tag\/(v?[\w.-]+)/);
+    return m2 ? m2[1].replace(/^v/i, "") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 兜底源2：releases.atom(RSS)。与 github.com 同域名，可达性与下载页一致。 */
+async function latestFromAtom(): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(`https://github.com/${REPO}/releases.atom`, 8000);
+    const xml = await res.text();
+    const m = xml.match(/<link[^>]*href="[^"]*\/releases\/tag\/([^"]+)"/);
+    return m ? m[1].replace(/^v/i, "") : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchLatestRelease(): Promise<string | null> {
+  // 主源 api.github.com（浏览器/Tauri 均无 CORS 问题）；失败后仅在 Tauri 环境
+  // 尝试 github.com 网页/atom 兜底（浏览器 dev 下这两个源有 CORS 限制，跳过）。
+  const api = await latestFromApi();
+  if (api) return api;
+  if (!isTauri()) return null;
+  return (await latestFromWeb()) ?? (await latestFromAtom());
 }
 
 // 模块级单例：session 内只查一次，避免 StrictMode 双调 / 反复切换触发多余请求。
