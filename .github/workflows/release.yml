@@ -5,6 +5,15 @@ name: Release
 # 否则产物文件名/版本号会与 Release 标题不一致。仅用 tag 触发（不加 workflow_dispatch：
 # 手动触发时 github.ref_name 是分支名，会被当成版本号建出垃圾 Release）。
 # 版本号必须为纯数字（如 0.1.4），不能带 -zh 等非数字后缀，否则 MSI 打包会失败。
+#
+# 除带版本号的产物外，每个 Release 还会额外上传「固定资产名」副本：
+#   macOS  →  Icones-macos.dmg
+#   Windows → Icones-windows.exe
+# 固定名资产让以下链接永远指向最新版安装包（无需改任何链接）：
+#   https://github.com/mufanmu/icones-desktop-zh/releases/latest/download/Icones-macos.dmg
+#   https://github.com/mufanmu/icones-desktop-zh/releases/latest/download/Icones-windows.exe
+# 注意：带版本号的产物名（Icones_0.1.4_universal.dmg）里的版本号会变，
+# 因此 latest/download 不能直接用版本号资产名；固定名副本是「永远最新」的下载入口。
 on:
   push:
     tags:
@@ -49,6 +58,15 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      - name: Upload fixed-name .dmg (latest/download entry)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dmg=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" ! -name "rw.*" | head -1)
+          echo "found: $dmg"
+          cp "$dmg" "Icones-macos.dmg"
+          gh release upload "${{ github.ref_name }}" "Icones-macos.dmg" --clobber
+
   build-windows:
     runs-on: windows-latest
     steps:
@@ -81,3 +99,12 @@ jobs:
           releaseName: "Icônes 中文版 ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
+
+      - name: Upload fixed-name .exe (latest/download entry)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          exe=$(find src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -name "*.exe" | head -1)
+          echo "found: $exe"
+          copy "$exe" "Icones-windows.exe"
+          gh release upload "${{ github.ref_name }}" "Icones-windows.exe" --clobber
