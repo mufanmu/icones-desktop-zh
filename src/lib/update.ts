@@ -5,7 +5,8 @@ export const REPO = "mufanmu/icones-desktop-zh";
 export const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
 
 const GITHUB_API = `https://api.github.com/repos/${REPO}/releases/latest`;
-const JSDELIVR_PKG = `https://cdn.jsdelivr.net/gh/${REPO}/package.json`;
+const RAW_PKG = `https://raw.githubusercontent.com/${REPO}/main/package.json`;
+const JSDELIVR_PKG = `https://cdn.jsdelivr.net/gh/${REPO}@main/package.json`;
 
 /** fetch 带超时：国内访问 api.github.com 常超时/被墙，避免请求无限挂起。 */
 async function fetchWithTimeout(url: string, ms = 8000): Promise<Response> {
@@ -51,9 +52,21 @@ export async function getAppVersion(): Promise<string> {
   }
 }
 
-/** 优先源：jsDelivr CDN 读仓库 package.json 的 version。国内可达性好、CORS 友好。
- *  反映 main 分支当前版本（发版时 main 已更新），略提前于 release 发布，可接受。
- *  加时间戳破 CDN 缓存，确保拿到最新。 */
+/** 最优先源：raw.githubusercontent.com 读 main 分支 package.json 的 version。
+ *  实时无 CDN 缓存延迟、CORS *、国内走 Fastly CDN 可达性好。
+ *  反映 main 分支当前版本（发版时 main 已更新），略提前于 release 发布，可接受。 */
+async function latestFromRaw(): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(RAW_PKG, 8000);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: string };
+    return data.version ? data.version.replace(/^v/i, "") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 次优先源：jsDelivr CDN（带 @main 锁定分支，边缘缓存更新更及时）。CORS *，国内加速。 */
 async function latestFromJsdelivr(): Promise<string | null> {
   try {
     const res = await fetchWithTimeout(`${JSDELIVR_PKG}?t=${Date.now()}`, 8000);
@@ -78,42 +91,15 @@ async function latestFromApi(): Promise<string | null> {
   }
 }
 
-/** 兜底源1：github.com 网页 releases/latest，跟随重定向后从最终 URL 提取 tag。
- *  国内 api.github.com 常被墙但 github.com 网页通常可访问，用它做 fallback。 */
-async function latestFromWeb(): Promise<string | null> {
-  try {
-    const res = await fetchWithTimeout(`https://github.com/${REPO}/releases/latest`, 8000);
-    const m = res.url.match(/\/releases\/tag\/([^/?]+)/);
-    if (m) return m[1].replace(/^v/i, "");
-    const html = await res.text();
-    const m2 = html.match(/releases\/tag\/(v?[\w.-]+)/);
-    return m2 ? m2[1].replace(/^v/i, "") : null;
-  } catch {
-    return null;
-  }
-}
-
-/** 兜底源2：releases.atom(RSS)。与 github.com 同域名，可达性与下载页一致。 */
-async function latestFromAtom(): Promise<string | null> {
-  try {
-    const res = await fetchWithTimeout(`https://github.com/${REPO}/releases.atom`, 8000);
-    const xml = await res.text();
-    const m = xml.match(/<link[^>]*href="[^"]*\/releases\/tag\/([^"]+)"/);
-    return m ? m[1].replace(/^v/i, "") : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function fetchLatestRelease(): Promise<string | null> {
-  // 优先 jsDelivr CDN（国内最可靠，CORS 友好）；失败回退 api.github.com；
-  // 再失败仅 Tauri 环境尝试 github.com 网页/atom（浏览器 dev 有 CORS 限制跳过）。
+  // 优先 raw.githubusercontent.com（实时无缓存）；失败回退 jsDelivr CDN（@main，国内加速）；
+  // 再失败回退 api.github.com（权威但国内常超时）。
+  // 不再使用 github.com 网页/atom 兜底：WKWebView 原生 fetch 跨域被 CORS 拦截（假兜底）。
+  const raw = await latestFromRaw();
+  if (raw) return raw;
   const cdn = await latestFromJsdelivr();
   if (cdn) return cdn;
-  const api = await latestFromApi();
-  if (api) return api;
-  if (!isTauri()) return null;
-  return (await latestFromWeb()) ?? (await latestFromAtom());
+  return await latestFromApi();
 }
 
 // 模块级单例：session 内只查一次，避免 StrictMode 双调 / 反复切换触发多余请求。
