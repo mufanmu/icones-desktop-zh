@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@iconify/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { CollectionMeta } from "../lib/api";
-import { RELEASES_URL, checkForUpdates, getAppVersion, openExternal } from "../lib/update";
+import { RELEASES_URL, checkForUpdates, getAppVersion, openExternal, resetUpdateCheck } from "../lib/update";
 
 export type PaletteFilter = "all" | "mono" | "color";
 
@@ -44,6 +44,7 @@ export function Sidebar({
   const [setQuery, setSetQuery] = useState("");
   const [appVer, setAppVer] = useState("");
   const [latest, setLatest] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
 
   // 加载本地版本号 + 检测 GitHub 是否有新版本（session 内只查一次）
   useEffect(() => {
@@ -54,6 +55,18 @@ export function Sidebar({
       alive = false;
     };
   }, []);
+
+  // 手动重新检查更新（重置缓存，强制发请求）
+  const recheckUpdate = () => {
+    if (checking) return;
+    setChecking(true);
+    resetUpdateCheck();
+    setLatest(null);
+    checkForUpdates()
+      .then((v) => setLatest(v))
+      .catch(() => {})
+      .finally(() => setChecking(false));
+  };
 
   // Group collections by category, filtered by the palette and the set search.
   const groups = useMemo(() => {
@@ -194,7 +207,19 @@ export function Sidebar({
           <Icon icon="lucide:arrow-up-right" />
         </button>
         <div className="foot-row">
-          {appVer && <span className="foot-version">v{appVer}</span>}
+          {appVer && (
+            <span className="foot-version" title="当前版本">
+              v{appVer}
+            </span>
+          )}
+          <button
+            className="recheck-btn"
+            onClick={recheckUpdate}
+            disabled={checking}
+            title={checking ? "检查中…" : "检查更新"}
+          >
+            <Icon icon={checking ? "lucide:loader-circle" : "lucide:refresh-cw"} className={checking ? "spin" : ""} />
+          </button>
           {latest && (
             <button
               className="update-btn"

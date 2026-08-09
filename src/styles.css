@@ -408,7 +408,6 @@ select {
 .foot-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
   padding: 2px 8px 4px;
 }
@@ -418,10 +417,42 @@ select {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.recheck-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.recheck-btn:hover:not(:disabled) {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+  color: var(--text-secondary, inherit);
+}
+.recheck-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.recheck-btn svg {
+  font-size: 12px;
+}
+.recheck-btn .spin {
+  animation: recheck-spin 0.8s linear infinite;
+}
+@keyframes recheck-spin {
+  to { transform: rotate(360deg); }
+}
 .update-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin-left: auto;
   padding: 3px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;

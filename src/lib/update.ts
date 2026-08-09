@@ -5,6 +5,7 @@ export const REPO = "mufanmu/icones-desktop-zh";
 export const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
 
 const GITHUB_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+const JSDELIVR_PKG = `https://cdn.jsdelivr.net/gh/${REPO}/package.json`;
 
 /** fetch 带超时：国内访问 api.github.com 常超时/被墙，避免请求无限挂起。 */
 async function fetchWithTimeout(url: string, ms = 8000): Promise<Response> {
@@ -50,6 +51,20 @@ export async function getAppVersion(): Promise<string> {
   }
 }
 
+/** 优先源：jsDelivr CDN 读仓库 package.json 的 version。国内可达性好、CORS 友好。
+ *  反映 main 分支当前版本（发版时 main 已更新），略提前于 release 发布，可接受。
+ *  加时间戳破 CDN 缓存，确保拿到最新。 */
+async function latestFromJsdelivr(): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(`${JSDELIVR_PKG}?t=${Date.now()}`, 8000);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: string };
+    return data.version ? data.version.replace(/^v/i, "") : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 查询 GitHub 最新 release 版本号（tag_name 去 v 前缀）。任何失败（无 release/限流/断网）返回 null。 */
 async function latestFromApi(): Promise<string | null> {
   try {
@@ -91,8 +106,10 @@ async function latestFromAtom(): Promise<string | null> {
 }
 
 export async function fetchLatestRelease(): Promise<string | null> {
-  // 主源 api.github.com（浏览器/Tauri 均无 CORS 问题）；失败后仅在 Tauri 环境
-  // 尝试 github.com 网页/atom 兜底（浏览器 dev 下这两个源有 CORS 限制，跳过）。
+  // 优先 jsDelivr CDN（国内最可靠，CORS 友好）；失败回退 api.github.com；
+  // 再失败仅 Tauri 环境尝试 github.com 网页/atom（浏览器 dev 有 CORS 限制跳过）。
+  const cdn = await latestFromJsdelivr();
+  if (cdn) return cdn;
   const api = await latestFromApi();
   if (api) return api;
   if (!isTauri()) return null;
@@ -100,7 +117,13 @@ export async function fetchLatestRelease(): Promise<string | null> {
 }
 
 // 模块级单例：session 内只查一次，避免 StrictMode 双调 / 反复切换触发多余请求。
+// 注意：检测失败（网络超时等）时不缓存，允许下次重试；仅成功结果（含"无更新"）缓存。
 let checkCache: Promise<string | null> | null = null;
+
+/** 手动重置检测缓存：下次 checkForUpdates 会重新发请求。 */
+export function resetUpdateCheck(): void {
+  checkCache = null;
+}
 
 // 测试模拟开关：URL 带 ?simulate-update=1 时，模拟存在一个新版本（用于预览「有新版本」按钮 UI）。
 // 不带该参数时行为完全正常（走真实 GitHub API 检测）。
@@ -122,9 +145,15 @@ export function checkForUpdates(): Promise<string | null> {
         return compareVersions(SIMULATED_LATEST, local) > 0 ? SIMULATED_LATEST : null;
       }
       const [latest, local] = await Promise.all([fetchLatestRelease(), getAppVersion()]);
-      if (!latest) return null;
+      if (!latest) {
+        checkCache = null; // 网络失败不缓存，允许下次重试
+        return null;
+      }
       return compareVersions(latest, local) > 0 ? latest : null;
-    })().catch(() => null);
+    })().catch(() => {
+      checkCache = null; // 异常不缓存
+      return null;
+    });
   }
   return checkCache;
 }
