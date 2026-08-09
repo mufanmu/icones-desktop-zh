@@ -14,6 +14,8 @@ interface Props {
   name: string; // full "prefix:name"
   onClose: () => void;
   onNavigateToSet?: (prefix: string) => void;
+  isFavIcon?: boolean;
+  onToggleFavIcon?: (iconName: string) => void;
 }
 
 function clampNum(n: number, min: number, max: number) {
@@ -32,7 +34,7 @@ function stripLeadingZeros(s: string) {
 
 const SWATCHES = ["#ffffff", "#0a0a0a", "#6366f1", "#22c55e", "#ef4444", "#f59e0b", "#06b6d4"];
 
-export function ExportPanel({ name, onClose, onNavigateToSet }: Props) {
+export function ExportPanel({ name, onClose, onNavigateToSet, isFavIcon, onToggleFavIcon }: Props) {
   const [raw, setRaw] = useState<IconifyIcon | null>(null);
   const [opts, setOpts] = useState<RenderOptions>(DEFAULT_OPTIONS);
   const [bg, setBg] = useState<string | null>(null); // preview only
@@ -115,6 +117,15 @@ export function ExportPanel({ name, onClose, onNavigateToSet }: Props) {
           )}
         </div>
         <div className="export-head-actions">
+          {onToggleFavIcon && (
+            <button
+              className={`icon-btn ${isFavIcon ? "active-fav" : ""}`}
+              title={isFavIcon ? "取消收藏" : "收藏图标"}
+              onClick={() => onToggleFavIcon(name)}
+            >
+              <Icon icon={isFavIcon ? "ri:star-fill" : "ri:star-line"} />
+            </button>
+          )}
           <button className="icon-btn" title="Reset" onClick={() => setOpts(DEFAULT_OPTIONS)}>
             <Icon icon="lucide:rotate-ccw" />
           </button>

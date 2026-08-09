@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "@iconify/react";
 import { Sidebar, type PaletteFilter } from "./components/Sidebar";
-import { Topbar } from "./components/Topbar";
+import { Topbar, type ThemeMode } from "./components/Topbar";
 import { IconGrid } from "./components/IconGrid";
 import { VariantBar } from "./components/VariantBar";
 import { ExportPanel } from "./components/ExportPanel";
@@ -14,6 +15,7 @@ import {
 import { detectVariants, matchesVariant } from "./lib/variants";
 import { isChinese, loadDict, translateChineseFull, filterCountryIconsForTerms, isCountryCode } from "./lib/zhSearch";
 import { rankIconsByRelevance } from "./lib/rank";
+import { getFavCollections, saveFavCollections, getFavIcons, saveFavIcons } from "./lib/favorites";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
@@ -44,8 +46,16 @@ export default function App() {
 
   const [palette, setPalette] = useState<PaletteFilter>("all");
   const [gridSize, setGridSize] = useState(56);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    return (localStorage.getItem("icones_theme_mode") as ThemeMode) || "auto";
+  });
+  const [effectiveTheme, setEffectiveTheme] = useState<"dark" | "light">("dark");
   const [variant, setVariant] = useState<string | null>(null);
+
+  // 收藏状态
+  const [favCollections, setFavCollections] = useState<string[]>(() => getFavCollections());
+  const [favIcons, setFavIcons] = useState<string[]>(() => getFavIcons());
+  const [isFavView, setIsFavView] = useState(false);
 
   // 启动加载 icon 集合索引并默认浏览第一个库，但不设搜索 pill。
   // 同时懒加载中文词典。
@@ -58,6 +68,27 @@ export default function App() {
       })
       .catch(() => setLoading(false));
     loadDict().catch(() => {});
+  }, []);
+
+  const toggleFavCollection = useCallback((prefix: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setFavCollections((prev) => {
+      const next = prev.includes(prefix)
+        ? prev.filter((p) => p !== prefix)
+        : [...prev, prefix];
+      saveFavCollections(next);
+      return next;
+    });
+  }, []);
+
+  const toggleFavIcon = useCallback((iconName: string) => {
+    setFavIcons((prev) => {
+      const next = prev.includes(iconName)
+        ? prev.filter((i) => i !== iconName)
+        : [...prev, iconName];
+      saveFavIcons(next);
+      return next;
+    });
   }, []);
 
   const searching = query.trim().length > 0;
@@ -201,6 +232,11 @@ export default function App() {
             zh || lowered.some(isCountryCode) || r.icons.length < limit;
           setTotal(noServerTotal ? finalIcons.length : r.total);
         }
+      } else if (isFavView) {
+        // 收藏视图
+        if (!alive) return;
+        setNames(favIcons);
+        setTotal(favIcons.length);
       } else if (activePrefix) {
         // 浏览当前库
         if (!alive) return;
@@ -226,7 +262,7 @@ export default function App() {
       alive = false;
       clearTimeout(t);
     };
-  }, [query, activePrefix, scopePill, searching, limit, allIcons]);
+  }, [query, activePrefix, scopePill, searching, limit, allIcons, isFavView, favIcons]);
 
   // Reset paging + variant whenever the context changes.
   useEffect(() => {
@@ -239,13 +275,34 @@ export default function App() {
   useEffect(() => setLimit(PAGE), [variant]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    // Overlay 标题栏由网页内容绘制；同步原生窗口主题让交通灯明暗也跟随 App 主题。
-    // 非 Tauri 环境（纯浏览器 dev）下静默跳过。
-    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-      getCurrentWindow().setTheme(theme).catch(() => {});
+    localStorage.setItem("icones_theme_mode", themeMode);
+
+    const applyTheme = () => {
+      let eff: "dark" | "light" = "dark";
+      if (themeMode === "auto") {
+        eff = window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light";
+      } else {
+        eff = themeMode;
+      }
+
+      setEffectiveTheme(eff);
+      document.documentElement.dataset.theme = eff;
+      if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+        getCurrentWindow().setTheme(eff).catch(() => {});
+      }
+    };
+
+    applyTheme();
+
+    if (themeMode === "auto") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handler = () => applyTheme();
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
     }
-  }, [theme]);
+  }, [themeMode]);
 
   // Variants only make sense when browsing a single set (not global search).
   const variants = useMemo(
@@ -262,18 +319,20 @@ export default function App() {
   const displayTotal = variant ? filtered.length : total;
 
   const activeMeta = collections.find((c) => c.prefix === activePrefix);
-  const breadcrumb = searching
-    ? scopePill
-      ? ["Icons", activeMeta?.name ?? scopePill, `"${query.trim()}"`]
-      : ["Icons", "Search", `"${query.trim()}"`]
-    : activeMeta
-      ? ["Icons", activeMeta.category || "Sets", activeMeta.name]
-      : ["Icons"];
 
   // 点侧边栏某库：切换"浏览的库" + 出现 pill 切到"库内搜索"
   const onSelectSet = useCallback((p: string) => {
+    setIsFavView(false);
     setActivePrefix(p);
     setScopePill(p);
+    setQuery("");
+    setScopeSelected(false);
+  }, []);
+
+  const onSelectFavView = useCallback(() => {
+    setIsFavView(true);
+    setActivePrefix(null);
+    setScopePill(null);
     setQuery("");
     setScopeSelected(false);
   }, []);
@@ -323,6 +382,7 @@ export default function App() {
 
   // 点击 ExportPanel 里的"切到该库"：等同于点侧边栏某库
   const onNavigateToSet = useCallback((p: string) => {
+    setIsFavView(false);
     setActivePrefix(p);
     setScopePill(p);
     setQuery("");
@@ -352,6 +412,10 @@ export default function App() {
         onPalette={setPalette}
         gridSize={gridSize}
         onGridSize={setGridSize}
+        favCollections={favCollections}
+        onToggleFavCollection={toggleFavCollection}
+        isFavView={isFavView}
+        onSelectFavView={onSelectFavView}
       />
 
       <main className="main">
@@ -365,12 +429,54 @@ export default function App() {
           scopeSelected={scopeSelected}
           onPillClick={onPillClick}
           onPillRemove={onPillRemove}
-          breadcrumb={breadcrumb}
-          theme={theme}
-          onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          themeMode={themeMode}
+          effectiveTheme={effectiveTheme}
+          onThemeModeChange={setThemeMode}
         />
 
         <div className="content" ref={contentRef}>
+          {isFavView && (
+            <div className="fav-collections-section">
+              <div className="fav-section-title">
+                <span>收藏的图标库 ({favCollections.length})</span>
+              </div>
+              {favCollections.length === 0 ? (
+                <div className="fav-empty-hint">未收藏任何图标库</div>
+              ) : (
+                <div className="fav-collections-grid">
+                  {favCollections.map((prefix) => {
+                    const meta = collections.find((c) => c.prefix === prefix);
+                    return (
+                      <div
+                        key={prefix}
+                        className="fav-collection-card"
+                        onClick={() => onSelectSet(prefix)}
+                      >
+                        <div className="fav-card-header">
+                          <span className="fav-card-name">{meta?.name ?? prefix}</span>
+                          <span
+                            className="fav-card-star active"
+                            title="取消收藏"
+                            onClick={(e) => toggleFavCollection(prefix, e)}
+                          >
+                            <Icon icon="ri:star-fill" />
+                          </span>
+                        </div>
+                        <div className="fav-card-meta">
+                          <span>{prefix}</span>
+                          {meta?.total !== undefined && <span>{meta.total} 个图标</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="fav-section-title" style={{ marginTop: 24 }}>
+                <span>收藏的图标 ({favIcons.length})</span>
+              </div>
+            </div>
+          )}
+
           <VariantBar variants={variants} active={variant} onSelect={setVariant} />
           <IconGrid
             icons={visible}
@@ -388,7 +494,9 @@ export default function App() {
                   : isChinese(query)
                     ? `未找到匹配 “${query}” 的图标`
                     : `No icons match "${query}"`
-                : "Select a set to browse"
+                : isFavView
+                  ? "暂无收藏的图标"
+                  : "Select a set to browse"
             }
           />
         </div>
@@ -399,6 +507,8 @@ export default function App() {
           name={selected}
           onClose={() => setSelected(null)}
           onNavigateToSet={onNavigateToSet}
+          isFavIcon={favIcons.includes(selected)}
+          onToggleFavIcon={toggleFavIcon}
         />
       )}
     </div>

@@ -1,6 +1,8 @@
 import { forwardRef } from "react";
 import { Icon } from "@iconify/react";
 
+export type ThemeMode = "auto" | "light" | "dark";
+
 interface Props {
   query: string;
   onQuery: (q: string) => void;
@@ -11,9 +13,9 @@ interface Props {
   scopeSelected: boolean;
   onPillClick: () => void;
   onPillRemove: () => void;
-  breadcrumb: string[];
-  theme: "dark" | "light";
-  onTheme: () => void;
+  themeMode: ThemeMode;
+  effectiveTheme: "dark" | "light";
+  onThemeModeChange: (mode: ThemeMode) => void;
 }
 
 export const Topbar = forwardRef<HTMLInputElement, Props>(function Topbar(
@@ -27,12 +29,18 @@ export const Topbar = forwardRef<HTMLInputElement, Props>(function Topbar(
     scopeSelected,
     onPillClick,
     onPillRemove,
-    breadcrumb,
-    theme,
-    onTheme,
+    themeMode,
+    effectiveTheme,
+    onThemeModeChange,
   },
   _ref,
 ) {
+  const getThemeLabel = (mode: ThemeMode) => {
+    if (mode === "auto") return "跟随系统";
+    if (mode === "light") return "亮色主题";
+    return "暗色主题";
+  };
+
   return (
     <header className="topbar">
       <div className="search">
@@ -107,17 +115,47 @@ export const Topbar = forwardRef<HTMLInputElement, Props>(function Topbar(
       </div>
 
       <div className="topbar-right">
-        <nav className="breadcrumb">
-          {breadcrumb.map((b, i) => (
-            <span key={i}>
-              {i > 0 && <span className="sep">/</span>}
-              <span className={i === breadcrumb.length - 1 ? "current" : ""}>{b}</span>
-            </span>
-          ))}
-        </nav>
-        <button className="ghost-btn" onClick={onTheme} title="Toggle theme">
-          <Icon icon={theme === "dark" ? "lucide:moon" : "lucide:sun"} />
-        </button>
+        <div className="theme-dropdown">
+          <button
+            className="theme-btn"
+            type="button"
+            title={`切换主题（当前：${getThemeLabel(themeMode)}）`}
+          >
+            <Icon
+              icon={effectiveTheme === "light" ? "ri:sun-line" : "ri:moon-line"}
+              className="theme-btn-icon"
+            />
+          </button>
+          <div className="theme-menu">
+            <button
+              type="button"
+              className={`theme-menu-item ${themeMode === "auto" ? "active" : ""}`}
+              onClick={() => onThemeModeChange("auto")}
+            >
+              <Icon icon="ri:computer-line" />
+              <span>跟随系统</span>
+              {themeMode === "auto" && <Icon icon="ri:check-line" className="check-icon" />}
+            </button>
+            <button
+              type="button"
+              className={`theme-menu-item ${themeMode === "light" ? "active" : ""}`}
+              onClick={() => onThemeModeChange("light")}
+            >
+              <Icon icon="ri:sun-line" />
+              <span>亮色主题</span>
+              {themeMode === "light" && <Icon icon="ri:check-line" className="check-icon" />}
+            </button>
+            <button
+              type="button"
+              className={`theme-menu-item ${themeMode === "dark" ? "active" : ""}`}
+              onClick={() => onThemeModeChange("dark")}
+            >
+              <Icon icon="ri:moon-line" />
+              <span>暗色主题</span>
+              {themeMode === "dark" && <Icon icon="ri:check-line" className="check-icon" />}
+            </button>
+          </div>
+        </div>
       </div>
     </header>
   );

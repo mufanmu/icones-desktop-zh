@@ -16,6 +16,10 @@ interface Props {
   onPalette: (p: PaletteFilter) => void;
   gridSize: number;
   onGridSize: (n: number) => void;
+  favCollections: string[];
+  onToggleFavCollection: (prefix: string, e?: React.MouseEvent) => void;
+  isFavView: boolean;
+  onSelectFavView: () => void;
 }
 
 const GRID_SIZES = [
@@ -32,6 +36,10 @@ export function Sidebar({
   onPalette,
   gridSize,
   onGridSize,
+  favCollections,
+  onToggleFavCollection,
+  isFavView,
+  onSelectFavView,
 }: Props) {
   const [setQuery, setSetQuery] = useState("");
   const [appVer, setAppVer] = useState("");
@@ -97,6 +105,17 @@ export function Sidebar({
 
       <div className="sidebar-scroll">
         <section>
+          <div className="sidebar-label">Favorites</div>
+          <button
+            className={`fav-nav-btn ${isFavView ? "active" : ""}`}
+            onClick={onSelectFavView}
+          >
+            <Icon icon={isFavView ? "lucide:star" : "lucide:star"} className="fav-star-icon" />
+            <span>收藏</span>
+          </button>
+        </section>
+
+        <section>
           <div className="sidebar-label">Sets</div>
           <div className="tree">
             {groups.length === 0 && <div className="tree-empty">No sets match “{setQuery}”</div>}
@@ -112,17 +131,27 @@ export function Sidebar({
                 </button>
                 {isOpen(cat) && (
                   <div className="tree-children">
-                    {items.map((c) => (
-                      <button
-                        key={c.prefix}
-                        className={`tree-child ${activePrefix === c.prefix ? "active" : ""}`}
-                        onClick={() => onSelect(c.prefix)}
-                        title={`${c.name} · ${c.total} icons`}
-                      >
-                        <span className="truncate">{c.name}</span>
-                        <span className="count">{c.total}</span>
-                      </button>
-                    ))}
+                    {items.map((c) => {
+                      const isFav = favCollections.includes(c.prefix);
+                      return (
+                        <button
+                          key={c.prefix}
+                          className={`tree-child ${!isFavView && activePrefix === c.prefix ? "active" : ""}`}
+                          onClick={() => onSelect(c.prefix)}
+                          title={`${c.name} · ${c.total} icons`}
+                        >
+                          <span className="truncate">{c.name}</span>
+                          <span
+                            className={`fav-star-btn ${isFav ? "active" : ""}`}
+                            onClick={(e) => onToggleFavCollection(c.prefix, e)}
+                            title={isFav ? "取消收藏此库" : "收藏此库"}
+                          >
+                            <Icon icon={isFav ? "ri:star-fill" : "ri:star-line"} />
+                          </span>
+                          <span className="count">{c.total}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>

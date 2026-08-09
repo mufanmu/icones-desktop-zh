@@ -22,7 +22,7 @@ export const DEFAULT_OPTIONS: RenderOptions = {
   hFlip: false,
   vFlip: false,
   color: "#ffffff",
-  currentColor: false,
+  currentColor: true,
 };
 
 const round = (n: number) => Math.round(n * 1000) / 1000;
