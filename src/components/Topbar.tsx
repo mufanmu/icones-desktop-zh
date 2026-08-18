@@ -95,7 +95,8 @@ export const Topbar = forwardRef<HTMLInputElement, Props>(function Topbar(
           value={query}
           onChange={(e) => onQuery(e.target.value)}
           onKeyDown={onInputKeyDown}
-          placeholder={scope ? `在 ${scopeName} 内搜索` : "Search 200,000+ icons"}
+          placeholder={scope ? `在 ${scopeName} 内搜索` : "搜索图标 · 支持组合关键词（如：首页 wifi / arrow left）"}
+          title={scope ? undefined : "支持多关键词组合搜索，空格分隔：如 箭头 向下 / home wifi"}
           spellCheck={false}
           autoFocus
         />

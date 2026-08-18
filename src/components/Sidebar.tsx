@@ -20,6 +20,7 @@ interface Props {
   onToggleFavCollection: (prefix: string, e?: React.MouseEvent) => void;
   isFavView: boolean;
   onSelectFavView: () => void;
+  onToggleCollapse: () => void;
 }
 
 const GRID_SIZES = [
@@ -40,6 +41,7 @@ export function Sidebar({
   onToggleFavCollection,
   isFavView,
   onSelectFavView,
+  onToggleCollapse,
 }: Props) {
   const [setQuery, setSetQuery] = useState("");
   const [appVer, setAppVer] = useState("");
@@ -113,6 +115,15 @@ export function Sidebar({
               <Icon icon="lucide:x" />
             </button>
           )}
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            onClick={onToggleCollapse}
+            title="收起侧边栏，完全沉浸搜索"
+            aria-label="收起侧边栏"
+          >
+            <Icon icon="lucide:panel-left-close" />
+          </button>
         </div>
       </div>
 

@@ -13,8 +13,8 @@ import {
   type CollectionMeta,
 } from "./lib/api";
 import { detectVariants, matchesVariant } from "./lib/variants";
-import { isChinese, loadDict, translateChineseFull, filterCountryIconsForTerms, isCountryCode } from "./lib/zhSearch";
-import { rankIconsByRelevance } from "./lib/rank";
+import { isChinese, loadDict, translateChineseFull, filterCountryIconsForTerms, isCountryCode, planQuery, mergePlans, CJK } from "./lib/zhSearch";
+import { rankIconsByRelevance, type RankGroup } from "./lib/rank";
 import { getFavCollections, saveFavCollections, getFavIcons, saveFavIcons } from "./lib/favorites";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
@@ -56,6 +56,15 @@ export default function App() {
   const [favCollections, setFavCollections] = useState<string[]>(() => getFavCollections());
   const [favIcons, setFavIcons] = useState<string[]>(() => getFavIcons());
   const [isFavView, setIsFavView] = useState(false);
+
+  // 侧边栏收起（完全沉浸搜索）：收起图标库搜索+图标库列表，主区全宽
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
+    localStorage.getItem("icones_sidebar_collapsed") === "1",
+  );
+
+  useEffect(() => {
+    localStorage.setItem("icones_sidebar_collapsed", sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
 
   // 启动加载 icon 集合索引并默认浏览第一个库，但不设搜索 pill。
   // 同时懒加载中文词典。
@@ -121,118 +130,131 @@ export default function App() {
     const run = async () => {
       try {
         if (searching) {
-        if (scopePill) {
-          // 库内本地过滤；中文先翻译成英文检索词再匹配图标名
           const q = query.trim();
-          let primary: string[];
-          let secondary: string[];
-          let fuzzy: string[];
-          if (isChinese(q)) {
-            await loadDict();
-            const plan = translateChineseFull(q);
-            primary = plan.primary;
-            secondary = plan.secondary;
-            fuzzy = plan.fuzzy;
-          } else {
-            primary = [q];
-            secondary = [];
-            fuzzy = [];
-          }
-          const lowerPrimary = primary.map((t) => t.toLowerCase());
-          const lowerSecondary = secondary.map((t) => t.toLowerCase());
-          const lowerFuzzy = fuzzy.map((t) => t.toLowerCase());
-          const lowerTerms = [...lowerPrimary, ...lowerSecondary, ...lowerFuzzy];
-          const hasCountry = lowerTerms.some(isCountryCode);
-          const matchesTerm = (full: string, t: string): boolean => {
-            const [prefix, rawName] = full.split(":");
-            const name = rawName.toLowerCase();
-            if (isCountryCode(t)) {
-              // 国旗精确匹配：短码严格等 或 flag 库带尺寸后缀；仅国旗库
-              const head = name.split("-")[0];
-              if (head !== t) return false;
-              if (name === t) return ["cif", "circle-flags", "flag", "flagpack"].includes(prefix);
-              if (prefix === "flag") {
-                const parts = name.split("-");
-                return parts.length === 2 && ["1x1", "4x3"].includes(parts[1]);
-              }
-              return false;
-            }
-            // 普通词仍 includes；若词条里混入了国家Flag短码就当作FlagFlag看，已经返
-            // 防止 includes(t) 与"国" 视觉上误吃其它国旗
-            if (hasCountry) {
-              const head = name.split("-")[0];
-              return head === t || name === t;
-            }
-            return name.includes(t);
-          };
-          // 主词 + fuzzy 全量过滤（主导，fuzzy 恢复旧规模不被砍短）；
-          // 联想词（类目混合词条）限量补充（每词前几个，总量 ≤12）。
-          // 无主词且无 fuzzy（纯联想场景）时退化为全量过滤，避免结果被砍。
-          let filtered: string[];
-          const coreTerms = [...lowerPrimary, ...lowerFuzzy];
-          if (coreTerms.length > 0) {
-            const coreFiltered = allIcons.filter((full) =>
-              coreTerms.some((t) => matchesTerm(full, t)),
-            );
-            const seen = new Set(coreFiltered);
-            const extra: string[] = [];
-            for (const t of lowerSecondary) {
-              if (extra.length >= 12) break;
-              for (const full of allIcons) {
-                if (seen.has(full)) continue;
-                if (matchesTerm(full, t)) {
-                  seen.add(full);
-                  extra.push(full);
+          const tokens = q.split(/\s+/).filter(Boolean);
+          const multiKeyword = tokens.length > 1;
+          // 词典懒加载（未命中词典时 plan 会回退为 raw token）
+          await loadDict();
+          // 每个关键词 token 独立翻译：中文+英文混输不丢词（"首页 wifi" → home + wifi）
+          const qGroups = planQuery(q);
+          // 排名用：每组 = 该关键词的全部检索词（主词→联想→fuzzy）
+          const rankGroups: RankGroup[] = qGroups.map((g) => ({
+            terms: [...g.plan.primary, ...g.plan.secondary, ...g.plan.fuzzy]
+              .map((t) => t.toLowerCase())
+              .filter(Boolean),
+          }));
+          const lowerTerms = [...new Set(rankGroups.flatMap((g) => g.terms))];
+          const pureAscii = tokens.every((t) => !CJK.test(t));
+          // 搜索用：跨 token 合并一份 primary/secondary/fuzzy（并集语义不变）
+          const merged = mergePlans(qGroups);
+
+          if (scopePill) {
+            // 库内本地过滤；中文先翻译成英文检索词再匹配图标名
+            const hasCountry = lowerTerms.some(isCountryCode);
+            const matchesTerm = (full: string, t: string): boolean => {
+              const [prefix, rawName] = full.split(":");
+              const name = rawName.toLowerCase();
+              if (isCountryCode(t)) {
+                // 国旗精确匹配：短码严格等 或 flag 库带尺寸后缀；仅国旗库
+                const head = name.split("-")[0];
+                if (head !== t) return false;
+                if (name === t) return ["cif", "circle-flags", "flag", "flagpack"].includes(prefix);
+                if (prefix === "flag") {
+                  const parts = name.split("-");
+                  return parts.length === 2 && ["1x1", "4x3"].includes(parts[1]);
                 }
-                if (extra.length >= 12) break;
+                return false;
               }
-            }
-            filtered = [...coreFiltered, ...extra];
-          } else {
-            filtered =
-              lowerTerms.length === 0
-                ? []
-                : allIcons.filter((full) => lowerTerms.some((t) => matchesTerm(full, t)));
-          }
-          if (!alive) return;
-          // 相关度重排：名字精确/前缀/独立段匹配优先于纯子串（如 camera > camera-off > video-camera）
-          setNames(rankIconsByRelevance(filtered, lowerTerms));
-          setTotal(filtered.length);
-        } else {
-          // 全局搜索
-          const zh = isChinese(query);
-          let r;
-          let terms: string[] = [];
-          if (zh) {
-            await loadDict();
-            const plan = translateChineseFull(query);
-            terms = [...plan.primary, ...plan.secondary, ...plan.fuzzy];
-            r = await searchIconsMulti(plan.primary, plan.secondary, plan.fuzzy, limit);
-          } else {
-            // 英文输入也先查字典：品牌词（gpt/wechat/alipay）等能映射到词典词条做多词扩展
-            await loadDict();
-            const plan = translateChineseFull(query);
-            if (plan.primary.length > 0 || plan.secondary.length > 0 || plan.fuzzy.length > 0) {
-              terms = [...plan.primary, ...plan.secondary, ...plan.fuzzy];
-              r = await searchIconsMulti(plan.primary, plan.secondary, plan.fuzzy, limit);
+              // 关键词内部用空格/下划线连接的（如 "arrow left"）归一化成段再匹配
+              const tnorm = t.replace(/[\s_]+/g, "-");
+              if (name.includes(tnorm)) return true;
+              // 组合词拆词后须全部命中（arrow-left 命中 arrow 与 left）
+              if (tnorm.includes("-")) {
+                const segs = name.split("-");
+                return tnorm.split("-").every((w) => name.includes(w) || segs.includes(w));
+              }
+              // 防止 includes(t) 与"国" 视觉上误吃其它国旗
+              if (hasCountry) {
+                const head = name.split("-")[0];
+                return head === t || name === t;
+              }
+              return name.includes(t);
+            };
+            // 主词 + fuzzy 全量过滤（主导，fuzzy 恢复旧规模不被砍短）；
+            // 联想词（类目混合词条）限量补充（每词前几个，总量 ≤12）。
+            const coreTerms = [
+              ...new Set(
+                qGroups
+                  .flatMap((g) => [
+                    ...g.plan.primary.map((t) => t.toLowerCase()),
+                    ...g.plan.fuzzy.map((t) => t.toLowerCase()),
+                  ])
+                  .filter(Boolean),
+              ),
+            ];
+            const secTerms = [
+              ...new Set(
+                qGroups.flatMap((g) => g.plan.secondary.map((t) => t.toLowerCase())).filter(Boolean),
+              ),
+            ];
+            let filtered: string[];
+            if (coreTerms.length > 0) {
+              const coreFiltered = allIcons.filter((full) =>
+                coreTerms.some((t) => matchesTerm(full, t)),
+              );
+              const seen = new Set(coreFiltered);
+              const extra: string[] = [];
+              for (const t of secTerms) {
+                if (extra.length >= 12) break;
+                for (const full of allIcons) {
+                  if (seen.has(full)) continue;
+                  if (matchesTerm(full, t)) {
+                    seen.add(full);
+                    extra.push(full);
+                  }
+                  if (extra.length >= 12) break;
+                }
+              }
+              filtered = [...coreFiltered, ...extra];
             } else {
-              terms = [query.trim()];
-              r = await searchIcons(query, limit);
+              // 无主词（理论不出现：planQuery 对每个 token 都会回退 primary=[token]）
+              filtered = allIcons.filter((full) =>
+                lowerTerms.some((t) => matchesTerm(full, t)),
+              );
             }
+            if (!alive) return;
+            // 相关度重排：关键词最关联的排最前；组合关键词先比覆盖数
+            setNames(rankIconsByRelevance(filtered, rankGroups, { multiKeyword }));
+            setTotal(filtered.length);
+          } else {
+            // 全局搜索
+            let r;
+            if (pureAscii) {
+              // 英文输入也先查字典：品牌词（gpt/wechat/alipay）等能映射到词典词条做多词扩展
+              const plan = translateChineseFull(q);
+              if (plan.primary.length > 0 || plan.secondary.length > 0 || plan.fuzzy.length > 0) {
+                r = await searchIconsMulti(plan.primary, plan.secondary, plan.fuzzy, limit);
+              } else {
+                // 无词典命中：整句一次 AND 搜索（"arrow left" 由 API 做组合匹配，
+                // 避免拆词并集后把只命单个词的图标淹进来）
+                r = await searchIcons(q, limit);
+              }
+            } else {
+              // 中文/中英混合：各 token 翻译后并集搜索（首页 wifi → home ∪ wifi）
+              r = await searchIconsMulti(merged.primary, merged.secondary, merged.fuzzy, limit);
+            }
+            if (!alive) return;
+            // 国旗精确过滤：若翻译词含真实国家码，剔除伪装者
+            const finalIcons = filterCountryIconsForTerms(r.icons, lowerTerms);
+            // 相关度重排：关键词最关联的排最前；组合关键词先比覆盖数
+            setNames(rankIconsByRelevance(finalIcons, rankGroups, { multiKeyword }));
+            // “加载更多”需要真实总数：普通英文单词搜索用 API 返回的 total（可翻页到 200 以上）；
+            // 中文多词并集 / 国旗过滤 / 已取尽（返回不足 limit）时无可靠服务端总数，用当前结果数。
+            const noServerTotal =
+              !pureAscii || lowerTerms.some(isCountryCode) || r.icons.length < limit;
+            setTotal(noServerTotal ? finalIcons.length : r.total);
           }
-          if (!alive) return;
-          const lowered = terms.map((t) => t.toLowerCase());
-          // 国旗精确过滤：若翻译词含真实国家码，剔除伪装者
-          const finalIcons = filterCountryIconsForTerms(r.icons, lowered);
-          // 相关度重排：名字精确/前缀/独立段匹配优先（camera > camera-off > video-camera > videocamera）
-          setNames(rankIconsByRelevance(finalIcons, lowered));
-          // “加载更多”需要真实总数：普通英文单词搜索用 API 返回的 total（可翻页到 200 以上）；
-          // 中文多词并集 / 国旗过滤 / 已取尽（返回不足 limit）时无可靠服务端总数，用当前结果数。
-          const noServerTotal =
-            zh || lowered.some(isCountryCode) || r.icons.length < limit;
-          setTotal(noServerTotal ? finalIcons.length : r.total);
-        }
-      } else if (isFavView) {
+        } else if (isFavView) {
         // 收藏视图
         if (!alive) return;
         setNames(favIcons);
@@ -390,6 +412,16 @@ export default function App() {
     setSelected(null);
   }, []);
 
+  // 收起/展开侧边栏：收起时清库过滤 pill 回全局，并聚焦主搜索框（沉浸搜索）
+  const toggleSidebar = useCallback(() => {
+    if (!sidebarCollapsed) {
+      setScopePill(null);
+      setScopeSelected(false);
+    }
+    setSidebarCollapsed(!sidebarCollapsed);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [sidebarCollapsed]);
+
   // 无限滚动:滚动到底部附近由哨兵触发,每批累加 PAGE;ref 锁防重复触发,
   // 锁在搜索 effect 的 finally 中释放(见上方 run)
   const handleLoadMore = useCallback(() => {
@@ -400,23 +432,36 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className={`app${sidebarCollapsed ? " collapse-sidebar" : ""}`}>
       {/* Overlay 标题栏：内容顶到窗口顶部，需显式全宽拖拽条，否则顶部无法拖动窗口。
           交通灯为原生层浮于其上仍可点击；下方搜索框在 34px 之下不受影响。 */}
       <div className="titlebar-drag" data-tauri-drag-region />
-      <Sidebar
-        collections={collections}
-        activePrefix={activePrefix}
-        onSelect={onSelectSet}
-        palette={palette}
-        onPalette={setPalette}
-        gridSize={gridSize}
-        onGridSize={setGridSize}
-        favCollections={favCollections}
-        onToggleFavCollection={toggleFavCollection}
-        isFavView={isFavView}
-        onSelectFavView={onSelectFavView}
-      />
+      {!sidebarCollapsed && (
+        <Sidebar
+          collections={collections}
+          activePrefix={activePrefix}
+          onSelect={onSelectSet}
+          palette={palette}
+          onPalette={setPalette}
+          gridSize={gridSize}
+          onGridSize={setGridSize}
+          favCollections={favCollections}
+          onToggleFavCollection={toggleFavCollection}
+          isFavView={isFavView}
+          onSelectFavView={onSelectFavView}
+          onToggleCollapse={toggleSidebar}
+        />
+      )}
+      {sidebarCollapsed && (
+        <button
+          className="sidebar-fab"
+          onClick={toggleSidebar}
+          title="展开侧边栏"
+          aria-label="展开侧边栏"
+        >
+          <Icon icon="lucide:panel-left-open" />
+        </button>
+      )}
 
       <main className="main">
         <Topbar

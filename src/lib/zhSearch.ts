@@ -21,6 +21,8 @@ let zhIndex: Map<string, ZhEntry[]> | null = null; // zh term -> 命中的词条
 let cnTermsCache: string[] | null = null; // 中国相关全部英文码集合
 
 const CJK = /[\u4e00-\u9fff]/;
+// 供 App 层判断关键词是否纯 ASCII（决定走 AND 单次搜索还是并集搜索）
+export { CJK };
 const FLAG_PREFIXES = new Set(["cif", "circle-flags", "flag", "flagpack"]);
 const FLAG_SIZE_SUFFIX = new Set(["1x1", "4x3"]); // flag 库的尺寸后缀白名单
 
@@ -196,6 +198,51 @@ export function translateChineseFull(query: string): TranslationPlan {
 export function translateChinese(query: string): string[] {
   const { primary, secondary, fuzzy } = translateChineseFull(query);
   return [...primary, ...secondary, ...fuzzy];
+}
+
+// ---- 关键词组合（关键词+关键词）支持 ----
+// 用户输入可能包含多个空格分隔的关键词："首页 wifi"、"arrow left"、"图标 放大镜"。
+// 旧实现把整句丢给 translateChineseFull 一次翻译，混输的英文词（wifi）会在整句维度
+// 被丢弃（CJK 存在时不做纯 Ascii 精确匹配），导致"中文+英文"组合搜索漏词。
+// 这里按空格切分后逐 token 独立翻译：中文 token 走词典，英文 token 无词典命中时
+// 以自身为检索词，保证每个关键词都被保留。
+
+export interface QueryToken {
+  token: string; // 原始 token
+  plan: TranslationPlan; // 该 token 的翻译计划（纯英文无命中时 primary=[token]）
+}
+
+/** 把用户输入切成关键词 token，并逐 token 翻译。 */
+export function planQuery(query: string): QueryToken[] {
+  return query
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => {
+      const plan = translateChineseFull(token);
+      if (plan.primary.length || plan.secondary.length || plan.fuzzy.length) {
+        return { token, plan };
+      }
+      return { token, plan: { primary: [token], secondary: [], fuzzy: [] } };
+    });
+}
+
+/** 合并多个 token 的计划为一份 primary/secondary/fuzzy（跨 token 去重，保序）。 */
+export function mergePlans(groups: QueryToken[]): TranslationPlan {
+  const out: TranslationPlan = { primary: [], secondary: [], fuzzy: [] };
+  const seen = new Set<string>();
+  const push = (arr: string[], v: string) => {
+    const val = v.trim().toLowerCase();
+    if (!val || seen.has(val)) return;
+    seen.add(val);
+    arr.push(val);
+  };
+  for (const g of groups) {
+    g.plan.primary.forEach((t) => push(out.primary, t));
+    g.plan.secondary.forEach((t) => push(out.secondary, t));
+    g.plan.fuzzy.forEach((t) => push(out.fuzzy, t));
+  }
+  return out;
 }
 
 // ISO 3166-1 alpha-2 国家/地区码全集。国旗库（circle-flags/flag/cif/flagpack）均以两字母码命名，

@@ -5016,5 +5016,14 @@
   {"en":["christmas"],"zh":["圣诞树"]},
   {"en":["santa"],"zh":["圣诞老人"]},
   {"en":["down"],"zh":["羽绒被"]},
-  {"en":["down"],"zh":["羽绒枕"]}
+  {"en":["down"],"zh":["羽绒枕"]},
+  {"en":["icon","icons"],"zh":["图标"]},
+  {"en":["gap","spacing","margin","padding"],"zh":["间距","空隙"]},
+  {"en":["internet","network","online","www"],"zh":["互联网","因特网"]},
+  {"en":["audio","sound","music","equalizer"],"zh":["音频"]},
+  {"en":["tutorial","course","guide","learn"],"zh":["教程","指南"]},
+  {"en":["member","members"],"zh":["成员"]},
+  {"en":["invite","invitation","user-plus"],"zh":["邀请"]},
+  {"en":["voice","speech","mic","microphone"],"zh":["语音"]},
+  {"en":["video","meeting","conference","video-camera"],"zh":["视频会议"]}
 ]
