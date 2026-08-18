@@ -473,6 +473,87 @@ select {
   opacity: 0.9;
 }
 
+/* 拖拽导出落盘提示（右下角） */
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  animation: toast-in 0.18s ease;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.toast-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 0;
+}
+.toast-path {
+  font-size: 11px;
+  color: var(--text-faint);
+  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toast-btn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.toast-btn:hover {
+  filter: brightness(1.1);
+}
+.toast-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+}
+.toast-btn.ghost:hover {
+  color: var(--text);
+}
+.toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.toast-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+
 /* ---------- fav collections section in main content ---------- */
 .fav-collections-section {
   margin-bottom: 20px;
@@ -900,7 +981,23 @@ select {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
+  cursor: grab; /* 可拖拽导出到其它应用 */
   transition: background 0.12s ease, transform 0.12s ease;
+}
+.cell:active {
+  cursor: grabbing;
+}
+
+/* 网格图标：真实 <img>(SVG data URI) 拖拽源——WebKit 拖出时才能写入图片数据。
+   不能设 pointer-events:none，否则拖拽手势会失效（点击仍会冒泡到按钮打开面板）。 */
+.cell-icon {
+  display: block;
+}
+.cell-icon-ph {
+  display: block;
+  border-radius: 2px;
+  background: var(--border);
+  opacity: 0.4;
 }
 .cell:hover {
   background: var(--surface-hover);

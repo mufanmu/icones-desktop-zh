@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
-import { Icon } from "@iconify/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Icon, loadIcon } from "@iconify/react";
+import { startNativeFileDrag, useThemeColor, rasterize } from "../lib/dragExport";
+import { buildSvg, DEFAULT_OPTIONS } from "../lib/svg";
 
 // 预加载提前量:哨兵距视口底部 800px 内即触发下一批
 const SENTINEL_MARGIN = 800;
@@ -14,6 +16,57 @@ interface Props {
   loadingMore?: boolean;
   onLoadMore?: () => void;
   emptyHint?: string;
+}
+
+/** 单个图标：异步加载 Iconify 图标数据 → 按主题烘色 → 渲染真实 <img>。 */
+// 用 <img>（SVG data URI）而非内联 <svg>，是为了让 WebKit 把它当作真正的
+// 图片拖拽源：拖到桌面生成图片、拖到 Figma/浏览器按图片接收。
+// 若仍用内联 <svg>，WKWebView 拖出时不会写入图片数据，目标只能拿到文本。
+// 拖拽源 = PNG 位图 <img>：WebKit 拖图片时会向系统粘贴板写位图，
+// 桌面落盘变图片、Figma 按图片接收；SVG 源码同步进剪贴板（粘贴为矢量）。
+function DragReadyIcon({ name, size }: { name: string; size: number }) {
+  const [svg, setSvg] = useState("");
+  const [png, setPng] = useState("");
+  const color = useThemeColor();
+
+  useEffect(() => {
+    let alive = true;
+    loadIcon(name)
+      .then((data) => {
+        if (!alive || !data) return;
+        setSvg(buildSvg(data, DEFAULT_OPTIONS));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [name]);
+
+  useEffect(() => {
+    if (!svg) return;
+    let alive = true;
+    rasterize(svg, color, 128).then((uri) => {
+      if (alive) setPng(uri);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [svg, color]);
+
+  if (!png) {
+    return <span className="cell-icon-ph" style={{ width: size, height: size }} aria-hidden />;
+  }
+  return (
+    <img
+      className="cell-icon"
+      src={png}
+      width={size}
+      height={size}
+      alt=""
+      draggable
+      onDragStart={(e) => startNativeFileDrag(e, svg, name)}
+    />
+  );
 }
 
 export function IconGrid({
@@ -101,9 +154,9 @@ export function IconGrid({
             key={name}
             className={`cell ${selected === name ? "selected" : ""}`}
             onClick={() => onSelect(name)}
-            title={name}
+            title={`${name} · 点击预览，拖拽可直接拖到 Figma/桌面等`}
           >
-            <Icon icon={name} width={iconPx} height={iconPx} />
+            <DragReadyIcon name={name} size={iconPx} />
           </button>
         ))}
       </div>

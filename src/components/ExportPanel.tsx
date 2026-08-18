@@ -9,6 +9,8 @@ import {
   type RenderOptions,
   type ExportFormat,
 } from "../lib/svg";
+import { startNativeFileDrag } from "../lib/dragExport";
+import { saveSvgFile } from "../lib/dragExport";
 
 interface Props {
   name: string; // full "prefix:name"
@@ -34,7 +36,13 @@ function stripLeadingZeros(s: string) {
 
 const SWATCHES = ["#ffffff", "#0a0a0a", "#6366f1", "#22c55e", "#ef4444", "#f59e0b", "#06b6d4"];
 
-export function ExportPanel({ name, onClose, onNavigateToSet, isFavIcon, onToggleFavIcon }: Props) {
+export function ExportPanel({
+  name,
+  onClose,
+  onNavigateToSet,
+  isFavIcon,
+  onToggleFavIcon,
+}: Props) {
   const [raw, setRaw] = useState<IconifyIcon | null>(null);
   const [opts, setOpts] = useState<RenderOptions>(DEFAULT_OPTIONS);
   const [bg, setBg] = useState<string | null>(null); // preview only
@@ -73,6 +81,14 @@ export function ExportPanel({ name, onClose, onNavigateToSet, isFavIcon, onToggl
     const out = toFormat(svg, format, shortName);
     if (action === "Download") {
       const ext = format === "React" ? "tsx" : format === "JSX" ? "jsx" : "svg";
+      // WKWebView 对 blob <a download> 下载支持不可靠，走 Rust 落盘到下载目录
+      const path = await saveSvgFile(`${shortName}.${ext}`, out, "Downloads");
+      if (path) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+        return;
+      }
+      // 浏览器环境（dev 预览）回退到 blob 下载
       const blob = new Blob([out], { type: "image/svg+xml" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -139,6 +155,15 @@ export function ExportPanel({ name, onClose, onNavigateToSet, isFavIcon, onToggl
         <div
           className={`preview ${bg ? "" : "checker"}`}
           style={bg ? { background: bg } : undefined}
+          draggable={!!svg}
+          onDragStart={(e) => {
+            if (svg) startNativeFileDrag(e, svg, name);
+          }}
+          title={
+            svg
+              ? "拖拽导出：保存到桌面 / 携带 SVG 源码(可粘贴进 Figma 二次编辑)"
+              : undefined
+          }
         >
           {svg ? (
             <div className="preview-svg" dangerouslySetInnerHTML={{ __html: svg }} />

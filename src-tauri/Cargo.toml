@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.1.11"
+version = "0.1.12"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -23,3 +23,24 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+
+[dependencies.objc2]
+version = "0.6"
+
+[dependencies.objc2-foundation]
+version = "0.3"
+default-features = false
+features = ["std", "NSData", "NSURL", "NSString", "NSArray", "NSGeometry", "NSObject"]
+
+[dependencies.objc2-app-kit]
+version = "0.3"
+default-features = false
+features = [
+  "std",
+  "NSDragging", "NSDraggingItem", "NSDraggingSession",
+  "NSPasteboard", "NSPasteboardItem", "NSEvent", "NSImage",
+  "NSWindow", "NSView", "NSGraphicsContext",
+]
+
+[dependencies.base64]
+version = "0.22"

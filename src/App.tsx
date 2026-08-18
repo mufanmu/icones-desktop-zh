@@ -66,6 +66,9 @@ export default function App() {
     localStorage.setItem("icones_sidebar_collapsed", sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
 
+  // 拖拽导出为原生文件拖拽（NSDraggingSession），无确认弹窗、不预写桌面
+
+
   // 启动加载 icon 集合索引并默认浏览第一个库，但不设搜索 pill。
   // 同时懒加载中文词典。
   useEffect(() => {
