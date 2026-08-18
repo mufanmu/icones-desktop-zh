@@ -8,23 +8,29 @@
 //   2) 构造 NSPasteboard(public.file-url) + NSDraggingItem(图标 PNG 作拖影)
 //   3) 在鼠标位置合成 NSEvent，由窗口 contentView 发起 NSDraggingSession
 // 之后完全交给系统：拖到哪、文件就到哪，弹窗一概没有。
+//
+// Windows/Linux：objc2 仅 macOS 可用，原生拖拽代码全部 #[cfg(target_os = "macos")]
+// 门控；前端在 Windows(WebView2) 走 Chromium 的 File 项拖出通道。
 
 use std::fs;
 use std::path::PathBuf;
 
-use objc2_foundation::{
-    MainThreadMarker, NSArray, NSData, NSObject, NSObjectProtocol, NSPoint, NSRect, NSString,
-    NSSize,
+#[cfg(target_os = "macos")]
+use {
+    objc2_foundation::{
+        MainThreadMarker, NSArray, NSData, NSObject, NSObjectProtocol, NSPoint, NSRect, NSString,
+        NSSize,
+    },
+    objc2::rc::Retained,
+    objc2::runtime::ProtocolObject,
+    objc2::{define_class, msg_send, AnyThread, MainThreadOnly},
+    objc2_app_kit::{
+        NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSDragOperation,
+        NSEvent, NSEventModifierFlags, NSEventType, NSImage, NSPasteboardItem,
+        NSPasteboardTypeFileURL, NSWindow,
+    },
+    tauri::{AppHandle, WebviewWindow},
 };
-use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
-use objc2::{define_class, msg_send};
-use objc2::{AnyThread, MainThreadOnly};
-use objc2_app_kit::{
-    NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSDragOperation,
-    NSEvent, NSEventModifierFlags, NSEventType, NSImage, NSPasteboardItem, NSPasteboardTypeFileURL, NSWindow,
-};
-use tauri::{AppHandle, WebviewWindow};
 
 fn safe_file_name(name: &str) -> String {
     let cleaned: String = name
@@ -46,7 +52,10 @@ fn dedupe_path(dir: &PathBuf, stem: &str, ext: &str) -> PathBuf {
     path
 }
 
+// ==================== macOS 原生拖拽（仅 macOS 编译） ====================
+
 /// 把 SVG 写入系统临时目录，返回 file:// URL。
+#[cfg(target_os = "macos")]
 fn write_temp_svg(file_name: &str, svg: &str) -> Result<String, String> {
     let dir = std::env::temp_dir().join("icones-desktop-drag");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -69,15 +78,14 @@ fn write_temp_svg(file_name: &str, svg: &str) -> Result<String, String> {
 }
 
 // ---- NSDraggingSource 实现：拖拽期间返回 Copy 操作 ----
+#[cfg(target_os = "macos")]
 define_class!(
-    // SAFETY: NSObject 无子类化要求；该类无实例变量、无 Drop。
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
     struct DragSource;
 
     unsafe impl NSObjectProtocol for DragSource {}
 
-    // SAFETY: 拖拽源协议无额外安全要求。
     unsafe impl NSDraggingSource for DragSource {
         #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
         fn draggingSession_sourceOperationMaskForDraggingContext(
@@ -106,71 +114,78 @@ fn start_file_drag(
 ) -> Result<(), String> {
     let file_url = write_temp_svg(&file_name, &svg)?;
 
-    // 主线程发起拖拽会话（AppKit 对象全部在主线程创建）
+    // 主线程发起拖拽会话（AppKit 对象全部在主线程创建，run_on_main_thread 要求 Send 闭包，
+    // 故 AppKit 对象在闭包内构造）
     app.run_on_main_thread(move || {
         let _ = (|| -> Result<(), String> {
-        let mt = MainThreadMarker::new().expect("main thread");
-        let ns_window = unsafe { &*window.ns_window().map_err(|e| e.to_string())?.cast::<NSWindow>() };
+            let mt = MainThreadMarker::new().expect("main thread");
+            let ns_window = unsafe {
+                &*window.ns_window().map_err(|e| e.to_string())?.cast::<NSWindow>()
+            };
 
-        // 1) pasteboard 数据：public.file-url（Finder / Figma 都认）
-        let pb_item = NSPasteboardItem::new();
-        pb_item.setString_forType(&NSString::from_str(&file_url), unsafe { NSPasteboardTypeFileURL });
-
-        // 2) 拖拽预览图（图标 PNG）
-        let image: Option<Retained<NSImage>> = png_b64
-            .and_then(|b64| {
-                use base64::Engine;
-                base64::engine::general_purpose::STANDARD
-                    .decode(b64)
-                    .ok()
-                    .map(|bytes| NSData::with_bytes(&bytes))
-            })
-            .and_then(|data| unsafe { NSImage::initWithData(NSImage::alloc(), &data) });
-
-        // 合成鼠标事件（位置 = 当前光标屏幕坐标）
-        let screen_point = NSPoint::new(screen_x, screen_y);
-        let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
-            NSEventType::LeftMouseDown,
-            screen_point,
-            NSEventModifierFlags::empty(),
-            0.0,
-            ns_window.windowNumber(),
-            None,
-            0,
-            1,
-            1.0,
-        )
-        .ok_or_else(|| "event failed".to_string())?;
-
-        // 拖拽项目：pasteboard writer + 拖影
-        let dragging_item = NSDraggingItem::initWithPasteboardWriter(
-            NSDraggingItem::alloc(),
-            ProtocolObject::from_ref(&*pb_item),
-        );
-        let view_point = ns_window.convertPointFromScreen(screen_point);
-        let frame = NSRect::new(
-            NSPoint::new(view_point.x - 24.0, view_point.y - 24.0),
-            NSSize::new(48.0, 48.0),
-        );
-        unsafe {
-            dragging_item.setDraggingFrame_contents(
-                frame,
-                image.as_deref().map(|img| img as &objc2::runtime::AnyObject),
+            // 1) pasteboard 数据：public.file-url（Finder / Figma 都认）
+            let pb_item = NSPasteboardItem::new();
+            pb_item.setString_forType(
+                &NSString::from_str(&file_url),
+                unsafe { NSPasteboardTypeFileURL },
             );
-        }
 
-        let source: Retained<DragSource> = unsafe {
-            let this = DragSource::alloc(mt).set_ivars(());
-            msg_send![super(this), init]
-        };
-        let items = NSArray::from_retained_slice(&[dragging_item]);
-        let view = ns_window.contentView().ok_or_else(|| "no content view".to_string())?;
-        let _session = view.beginDraggingSessionWithItems_event_source(
-            &items,
-            &event,
-            ProtocolObject::from_ref(&*source),
-        );
-        Ok(())
+            // 2) 拖拽预览图（图标 PNG）
+            let image: Option<Retained<NSImage>> = png_b64
+                .and_then(|b64| {
+                    use base64::Engine;
+                    base64::engine::general_purpose::STANDARD
+                        .decode(b64)
+                        .ok()
+                        .map(|bytes| NSData::with_bytes(&bytes))
+                })
+                .and_then(|data| unsafe { NSImage::initWithData(NSImage::alloc(), &data) });
+
+            // 3) 合成鼠标事件（位置 = 当前光标屏幕坐标）
+            let screen_point = NSPoint::new(screen_x, screen_y);
+            let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                NSEventType::LeftMouseDown,
+                screen_point,
+                NSEventModifierFlags::empty(),
+                0.0,
+                ns_window.windowNumber(),
+                None,
+                0,
+                1,
+                1.0,
+            )
+            .ok_or_else(|| "event failed".to_string())?;
+
+            // 4) 拖拽项目：pasteboard writer + 拖影
+            let dragging_item = NSDraggingItem::initWithPasteboardWriter(
+                NSDraggingItem::alloc(),
+                ProtocolObject::from_ref(&*pb_item),
+            );
+            let view_point = ns_window.convertPointFromScreen(screen_point);
+            let frame = NSRect::new(
+                NSPoint::new(view_point.x - 24.0, view_point.y - 24.0),
+                NSSize::new(48.0, 48.0),
+            );
+            unsafe {
+                dragging_item.setDraggingFrame_contents(
+                    frame,
+                    image.as_deref().map(|img| img as &objc2::runtime::AnyObject),
+                );
+            }
+
+            // 5) 发起会话（源对象被系统持有直至拖拽结束）
+            let source: Retained<DragSource> = unsafe {
+                let this = DragSource::alloc(mt).set_ivars(());
+                msg_send![super(this), init]
+            };
+            let items = NSArray::from_retained_slice(&[dragging_item]);
+            let view = ns_window.contentView().ok_or_else(|| "no content view".to_string())?;
+            let _session = view.beginDraggingSessionWithItems_event_source(
+                &items,
+                &event,
+                ProtocolObject::from_ref(&*source),
+            );
+            Ok(())
         })();
     })
     .map_err(|e| e.to_string())?;
@@ -178,11 +193,15 @@ fn start_file_drag(
     Ok(())
 }
 
-/// 把 SVG 写入指定位置（面板 Download / 保存到桌面），返回绝对路径。
+// ==================== 跨平台导出（面板 Download / 保存到桌面） ====================
+
+/// 把 SVG 写入指定位置，返回绝对路径。
 /// location: "Desktop" / "Downloads" / "temp"；文件名自动去重。
 #[tauri::command]
 fn save_svg_export(file_name: String, svg: String, location: String) -> Result<String, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE not set")?;
     let dir = match location.as_str() {
         "Downloads" => PathBuf::from(&home).join("Downloads"),
         "temp" => std::env::temp_dir().join("icones-desktop-drag"),
