@@ -108,39 +108,69 @@ export function rasterize(svg: string, color: string, size: number): Promise<str
 }
 
 /**
- * 发起原生文件拖拽（拖拽源事件上调用）：
- * 取消 webview 的空拖拽 → 光栅化 PNG 拖影 → 把 SVG 写成临时文件并启动
- * NSDraggingSession。之后系统接管，拖到哪文件就到哪。
+ * 发起图标拖拽导出（拖拽源事件上调用）：
+ *  - macOS：取消 webview 空拖拽 → 光栅化 PNG 拖影 → Rust 写临时文件并以
+ *    NSDraggingSession 发起原生文件拖拽，拖到哪文件就到哪。
+ *  - Windows/Linux（WebView2/Chromium 内核）：原生 File 项拖出受支持，
+ *    直接走网页拖拽（真实 .svg 文件项），不 preventDefault。
  */
-export async function startNativeFileDrag(
+export function startNativeFileDrag(
   e: React.DragEvent,
   svg: string,
   name: string,
-): Promise<void> {
+): void {
   if (!svg) return;
-  e.preventDefault(); // 取消 webview 自带的空拖拽
-  if (!isTauri()) return;
   const short = name.split(":").pop() ?? name;
-  try {
-    // 拖拽预览图（主题色烘烤）
-    const color = getComputedStyle(document.body).color || "#ffffff";
-    const png = await rasterize(svg, color, 128);
-    const b64 = png.includes(",") ? png.split(",")[1] : null;
+  const isMac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
 
-    // 鼠标屏幕坐标 = 窗口位置 + 视图内坐标 × 缩放
-    const win = getCurrentWindow();
-    const [pos, scale] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
-    const screenX = pos.x + e.clientX * scale;
-    const screenY = pos.y + e.clientY * scale;
-
-    await invoke("start_file_drag", {
-      fileName: `${short}.svg`,
-      svg,
-      pngB64: b64,
-      screenX,
-      screenY,
-    });
-  } catch {
-    /* 原生拖拽失败时静默（保留 webview 默认行为由系统兜底） */
+  if (!isTauri() || !isMac) {
+    // WebView2 / 浏览器：真实文件项拖出（Chromium 支持）
+    const dt = e.dataTransfer;
+    dt.effectAllowed = "copy";
+    const dataUri = svgDataUri(svg);
+    try {
+      dt.setData("text/uri-list", dataUri);
+    } catch {
+      /* ignore */
+    }
+    try {
+      dt.setData("text/html", `<img src="${dataUri}">`);
+    } catch {
+      /* ignore */
+    }
+    try {
+      dt.items.add(
+        new File([new Blob([svg], { type: "image/svg+xml" })], `${short}.svg`, {
+          type: "image/svg+xml",
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+    return;
   }
+
+  // macOS：原生文件拖拽
+  e.preventDefault(); // 取消 webview 自带的空拖拽
+  const color = getComputedStyle(document.body).color || "#ffffff";
+  rasterize(svg, color, 128)
+    .then(async (png) => {
+      const b64 = png.includes(",") ? png.split(",")[1] : null;
+      const win = getCurrentWindow();
+      const [pos, scale] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
+      const screenX = pos.x + e.clientX * scale;
+      const screenY = pos.y + e.clientY * scale;
+      await invoke("start_file_drag", {
+        fileName: `${short}.svg`,
+        svg,
+        pngB64: b64,
+        screenX,
+        screenY,
+      });
+    })
+    .catch(() => {
+      /* 原生拖拽失败时静默 */
+    });
 }

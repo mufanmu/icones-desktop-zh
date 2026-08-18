@@ -90,9 +90,10 @@ define_class!(
     }
 );
 
-/// 发起原生文件拖拽。
+/// 发起原生文件拖拽（仅 macOS）。
 /// file_name：带扩展名（如 home.svg）；png_b64：拖拽预览图（可选，SVG 光栅 PNG）；
 /// screen_x / screen_y：当前鼠标的屏幕坐标（逻辑像素）。
+#[cfg(target_os = "macos")]
 #[tauri::command]
 fn start_file_drag(
     app: AppHandle,
@@ -204,33 +205,14 @@ fn save_svg_export(file_name: String, svg: String, location: String) -> Result<S
     path.to_str().map(str::to_string).ok_or_else(|| "path not utf8".to_string())
 }
 
-/// 把文本写入系统剪贴板（macOS pbcopy，绕开 WKWebView 限制）。
-#[tauri::command]
-fn copy_to_clipboard(text: String) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("pbcopy")
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| "no stdin".to_string())?
-        .write_all(text.as_bytes())
-        .map_err(|e| e.to_string())?;
-    child.wait().map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")]
             start_file_drag,
-            save_svg_export,
-            copy_to_clipboard
+            save_svg_export
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
