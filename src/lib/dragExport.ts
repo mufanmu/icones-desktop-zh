@@ -13,7 +13,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type SaveLocation = "Desktop" | "Downloads" | "temp";
 
-const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const isTauri = () =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** 调 Rust：把内容写入某位置（面板 Download / 保存用），返回绝对路径。 */
 export async function saveSvgFile(
@@ -23,21 +24,28 @@ export async function saveSvgFile(
 ): Promise<string | null> {
   if (!isTauri()) return null;
   try {
-    return await invoke<string>("save_svg_export", { fileName, svg: content, location });
+    return await invoke<string>("save_svg_export", {
+      fileName,
+      svg: content,
+      location,
+    });
   } catch {
     return null;
   }
 }
 
 // ---- 主题颜色单例订阅（网格 200+ 图标共享一个 MutationObserver） ----
-let themeListeners = new Set<() => void>();
+const themeListeners = new Set<() => void>();
 let themeObserver: MutationObserver | null = null;
 function ensureThemeObserver() {
   if (themeObserver) return;
   themeObserver = new MutationObserver(() => {
     themeListeners.forEach((fn) => fn());
   });
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
 }
 export function subscribeThemeColor(fn: () => void): () => void {
   ensureThemeObserver();
@@ -73,15 +81,24 @@ export const DATA_URI_PREFIX = "data:image/svg+xml;charset=utf-8,";
 
 /** 按主题把 currentColor 烘成具体颜色，生成 SVG data URI。 */
 export function svgDataUri(svg: string, color?: string | null): string {
-  const colored = color && color !== "currentColor" ? svg.replaceAll("currentColor", color) : svg;
+  const colored =
+    color && color !== "currentColor"
+      ? svg.replaceAll("currentColor", color)
+      : svg;
   return DATA_URI_PREFIX + encodeURIComponent(colored);
 }
 
 // ---- 光栅化：SVG → PNG data URI（原生拖拽的预览图；按 name+color 缓存） ----
 const pngCache = new Map<string, Promise<string>>();
 
-export function rasterize(svg: string, color: string, size: number): Promise<string> {
-  const key = `${size}|${color}|${svg.length}`;
+export function rasterize(
+  svg: string,
+  color: string,
+  size: number,
+): Promise<string> {
+  // 键用 SVG 完整内容而非长度：不同图标 SVG 可能恰好等长，按长度做键
+  // 会让它们共用同一张 PNG（如 tabler:home 显示成 "AA"），看似排序不对。
+  const key = `${size}|${color}|${svg}`;
   const hit = pngCache.get(key);
   if (hit) return hit;
   const p = new Promise<string>((resolve, reject) => {
@@ -159,7 +176,10 @@ export function startNativeFileDrag(
     .then(async (png) => {
       const b64 = png.includes(",") ? png.split(",")[1] : null;
       const win = getCurrentWindow();
-      const [pos, scale] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
+      const [pos, scale] = await Promise.all([
+        win.outerPosition(),
+        win.scaleFactor(),
+      ]);
       const screenX = pos.x + e.clientX * scale;
       const screenY = pos.y + e.clientY * scale;
       await invoke("start_file_drag", {

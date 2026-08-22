@@ -13,9 +13,23 @@ import {
   type CollectionMeta,
 } from "./lib/api";
 import { detectVariants, matchesVariant } from "./lib/variants";
-import { isChinese, loadDict, translateChineseFull, filterCountryIconsForTerms, isCountryCode, planQuery, mergePlans, CJK } from "./lib/zhSearch";
+import {
+  isChinese,
+  loadDict,
+  translateChineseFull,
+  filterCountryIconsForTerms,
+  isCountryCode,
+  planQuery,
+  mergePlans,
+  CJK,
+} from "./lib/zhSearch";
 import { rankIconsByRelevance, type RankGroup } from "./lib/rank";
-import { getFavCollections, saveFavCollections, getFavIcons, saveFavIcons } from "./lib/favorites";
+import {
+  getFavCollections,
+  saveFavCollections,
+  getFavIcons,
+  saveFavIcons,
+} from "./lib/favorites";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
@@ -49,25 +63,31 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     return (localStorage.getItem("icones_theme_mode") as ThemeMode) || "auto";
   });
-  const [effectiveTheme, setEffectiveTheme] = useState<"dark" | "light">("dark");
+  const [effectiveTheme, setEffectiveTheme] = useState<"dark" | "light">(
+    "dark",
+  );
   const [variant, setVariant] = useState<string | null>(null);
 
   // 收藏状态
-  const [favCollections, setFavCollections] = useState<string[]>(() => getFavCollections());
+  const [favCollections, setFavCollections] = useState<string[]>(() =>
+    getFavCollections(),
+  );
   const [favIcons, setFavIcons] = useState<string[]>(() => getFavIcons());
   const [isFavView, setIsFavView] = useState(false);
 
   // 侧边栏收起（完全沉浸搜索）：收起图标库搜索+图标库列表，主区全宽
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
-    localStorage.getItem("icones_sidebar_collapsed") === "1",
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
+    () => localStorage.getItem("icones_sidebar_collapsed") === "1",
   );
 
   useEffect(() => {
-    localStorage.setItem("icones_sidebar_collapsed", sidebarCollapsed ? "1" : "0");
+    localStorage.setItem(
+      "icones_sidebar_collapsed",
+      sidebarCollapsed ? "1" : "0",
+    );
   }, [sidebarCollapsed]);
 
   // 拖拽导出为原生文件拖拽（NSDraggingSession），无确认弹窗、不预写桌面
-
 
   // 启动加载 icon 集合索引并默认浏览第一个库，但不设搜索 pill。
   // 同时懒加载中文词典。
@@ -82,16 +102,19 @@ export default function App() {
     loadDict().catch(() => {});
   }, []);
 
-  const toggleFavCollection = useCallback((prefix: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setFavCollections((prev) => {
-      const next = prev.includes(prefix)
-        ? prev.filter((p) => p !== prefix)
-        : [...prev, prefix];
-      saveFavCollections(next);
-      return next;
-    });
-  }, []);
+  const toggleFavCollection = useCallback(
+    (prefix: string, e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+      setFavCollections((prev) => {
+        const next = prev.includes(prefix)
+          ? prev.filter((p) => p !== prefix)
+          : [...prev, prefix];
+        saveFavCollections(next);
+        return next;
+      });
+    },
+    [],
+  );
 
   const toggleFavIcon = useCallback((iconName: string) => {
     setFavIcons((prev) => {
@@ -161,10 +184,15 @@ export default function App() {
                 // 国旗精确匹配：短码严格等 或 flag 库带尺寸后缀；仅国旗库
                 const head = name.split("-")[0];
                 if (head !== t) return false;
-                if (name === t) return ["cif", "circle-flags", "flag", "flagpack"].includes(prefix);
+                if (name === t)
+                  return ["cif", "circle-flags", "flag", "flagpack"].includes(
+                    prefix,
+                  );
                 if (prefix === "flag") {
                   const parts = name.split("-");
-                  return parts.length === 2 && ["1x1", "4x3"].includes(parts[1]);
+                  return (
+                    parts.length === 2 && ["1x1", "4x3"].includes(parts[1])
+                  );
                 }
                 return false;
               }
@@ -174,7 +202,9 @@ export default function App() {
               // 组合词拆词后须全部命中（arrow-left 命中 arrow 与 left）
               if (tnorm.includes("-")) {
                 const segs = name.split("-");
-                return tnorm.split("-").every((w) => name.includes(w) || segs.includes(w));
+                return tnorm
+                  .split("-")
+                  .every((w) => name.includes(w) || segs.includes(w));
               }
               // 防止 includes(t) 与"国" 视觉上误吃其它国旗
               if (hasCountry) {
@@ -197,7 +227,9 @@ export default function App() {
             ];
             const secTerms = [
               ...new Set(
-                qGroups.flatMap((g) => g.plan.secondary.map((t) => t.toLowerCase())).filter(Boolean),
+                qGroups
+                  .flatMap((g) => g.plan.secondary.map((t) => t.toLowerCase()))
+                  .filter(Boolean),
               ),
             ];
             let filtered: string[];
@@ -226,17 +258,30 @@ export default function App() {
               );
             }
             if (!alive) return;
-            // 相关度重排：关键词最关联的排最前；组合关键词先比覆盖数
-            setNames(rankIconsByRelevance(filtered, rankGroups, { multiKeyword }));
-            setTotal(filtered.length);
+            // 相关度重排：关键词最关联的排最前；组合关键词先比覆盖数。
+            // 重排会裁掉弱相关长尾，total 用裁剪后的长度保持一致。
+            const ranked = rankIconsByRelevance(filtered, rankGroups, {
+              multiKeyword,
+            });
+            setNames(ranked);
+            setTotal(ranked.length);
           } else {
             // 全局搜索
             let r;
             if (pureAscii) {
               // 英文输入也先查字典：品牌词（gpt/wechat/alipay）等能映射到词典词条做多词扩展
               const plan = translateChineseFull(q);
-              if (plan.primary.length > 0 || plan.secondary.length > 0 || plan.fuzzy.length > 0) {
-                r = await searchIconsMulti(plan.primary, plan.secondary, plan.fuzzy, limit);
+              if (
+                plan.primary.length > 0 ||
+                plan.secondary.length > 0 ||
+                plan.fuzzy.length > 0
+              ) {
+                r = await searchIconsMulti(
+                  plan.primary,
+                  plan.secondary,
+                  plan.fuzzy,
+                  limit,
+                );
               } else {
                 // 无词典命中：整句一次 AND 搜索（"arrow left" 由 API 做组合匹配，
                 // 避免拆词并集后把只命单个词的图标淹进来）
@@ -244,33 +289,42 @@ export default function App() {
               }
             } else {
               // 中文/中英混合：各 token 翻译后并集搜索（首页 wifi → home ∪ wifi）
-              r = await searchIconsMulti(merged.primary, merged.secondary, merged.fuzzy, limit);
+              r = await searchIconsMulti(
+                merged.primary,
+                merged.secondary,
+                merged.fuzzy,
+                limit,
+              );
             }
             if (!alive) return;
             // 国旗精确过滤：若翻译词含真实国家码，剔除伪装者
             const finalIcons = filterCountryIconsForTerms(r.icons, lowerTerms);
             // 相关度重排：关键词最关联的排最前；组合关键词先比覆盖数
-            setNames(rankIconsByRelevance(finalIcons, rankGroups, { multiKeyword }));
+            setNames(
+              rankIconsByRelevance(finalIcons, rankGroups, { multiKeyword }),
+            );
             // “加载更多”需要真实总数：普通英文单词搜索用 API 返回的 total（可翻页到 200 以上）；
             // 中文多词并集 / 国旗过滤 / 已取尽（返回不足 limit）时无可靠服务端总数，用当前结果数。
             const noServerTotal =
-              !pureAscii || lowerTerms.some(isCountryCode) || r.icons.length < limit;
+              !pureAscii ||
+              lowerTerms.some(isCountryCode) ||
+              r.icons.length < limit;
             setTotal(noServerTotal ? finalIcons.length : r.total);
           }
         } else if (isFavView) {
-        // 收藏视图
-        if (!alive) return;
-        setNames(favIcons);
-        setTotal(favIcons.length);
-      } else if (activePrefix) {
-        // 浏览当前库
-        if (!alive) return;
-        setNames(allIcons);
-        setTotal(allIcons.length);
-      } else {
-        setNames([]);
-        setTotal(0);
-      }
+          // 收藏视图
+          if (!alive) return;
+          setNames(favIcons);
+          setTotal(favIcons.length);
+        } else if (activePrefix) {
+          // 浏览当前库
+          if (!alive) return;
+          setNames(allIcons);
+          setTotal(allIcons.length);
+        } else {
+          setNames([]);
+          setTotal(0);
+        }
       } finally {
         // 无论成功/失败/中止都复位增量加载态并释放锁;旧的 run(alive=false)跳过,
         // 保证锁只由最新一次请求释放
@@ -287,7 +341,16 @@ export default function App() {
       alive = false;
       clearTimeout(t);
     };
-  }, [query, activePrefix, scopePill, searching, limit, allIcons, isFavView, favIcons]);
+  }, [
+    query,
+    activePrefix,
+    scopePill,
+    searching,
+    limit,
+    allIcons,
+    isFavView,
+    favIcons,
+  ]);
 
   // Reset paging + variant whenever the context changes.
   useEffect(() => {
@@ -315,7 +378,9 @@ export default function App() {
       setEffectiveTheme(eff);
       document.documentElement.dataset.theme = eff;
       if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-        getCurrentWindow().setTheme(eff).catch(() => {});
+        getCurrentWindow()
+          .setTheme(eff)
+          .catch(() => {});
       }
     };
 
@@ -501,7 +566,9 @@ export default function App() {
                         onClick={() => onSelectSet(prefix)}
                       >
                         <div className="fav-card-header">
-                          <span className="fav-card-name">{meta?.name ?? prefix}</span>
+                          <span className="fav-card-name">
+                            {meta?.name ?? prefix}
+                          </span>
                           <span
                             className="fav-card-star active"
                             title="取消收藏"
@@ -512,7 +579,9 @@ export default function App() {
                         </div>
                         <div className="fav-card-meta">
                           <span>{prefix}</span>
-                          {meta?.total !== undefined && <span>{meta.total} 个图标</span>}
+                          {meta?.total !== undefined && (
+                            <span>{meta.total} 个图标</span>
+                          )}
                         </div>
                       </div>
                     );
@@ -525,7 +594,11 @@ export default function App() {
             </div>
           )}
 
-          <VariantBar variants={variants} active={variant} onSelect={setVariant} />
+          <VariantBar
+            variants={variants}
+            active={variant}
+            onSelect={setVariant}
+          />
           <IconGrid
             icons={visible}
             total={displayTotal}

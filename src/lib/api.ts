@@ -49,14 +49,18 @@ export async function fetchCollections(): Promise<CollectionMeta[]> {
 export async function fetchCollection(prefix: string): Promise<CollectionInfo> {
   const cached = collectionCache.get(prefix);
   if (cached) return cached;
-  const res = await fetch(`${API}/collection?prefix=${encodeURIComponent(prefix)}`);
+  const res = await fetch(
+    `${API}/collection?prefix=${encodeURIComponent(prefix)}`,
+  );
   const data = (await res.json()) as any;
 
   // Icons can live under `uncategorized` and/or `categories: { cat: [...] }`.
   const names = new Set<string>();
-  if (Array.isArray(data.uncategorized)) data.uncategorized.forEach((n: string) => names.add(n));
+  if (Array.isArray(data.uncategorized))
+    data.uncategorized.forEach((n: string) => names.add(n));
   if (data.categories) {
-    for (const arr of Object.values<string[]>(data.categories)) arr.forEach((n) => names.add(n));
+    for (const arr of Object.values<string[]>(data.categories))
+      arr.forEach((n) => names.add(n));
   }
   // Aliases are real, usable icon names too.
   if (data.aliases) Object.keys(data.aliases).forEach((n) => names.add(n));
@@ -76,10 +80,15 @@ export interface SearchResult {
   total: number;
 }
 
-export async function searchIcons(query: string, limit = 120): Promise<SearchResult> {
+export async function searchIcons(
+  query: string,
+  limit = 120,
+): Promise<SearchResult> {
   const q = query.trim();
   if (!q) return { icons: [], total: 0 };
-  const res = await fetch(`${API}/search?query=${encodeURIComponent(q)}&limit=${limit}`);
+  const res = await fetch(
+    `${API}/search?query=${encodeURIComponent(q)}&limit=${limit}`,
+  );
   const data = (await res.json()) as any;
   const icons: string[] = data.icons ?? [];
   return { icons, total: data.total ?? icons.length };
@@ -95,6 +104,11 @@ export async function searchIcons(query: string, limit = 120): Promise<SearchRes
 // 合并结果不按 limit 截断（仅防爆上限 MAX_MERGE），由 App 端 visible 分页显示——
 // 这样中文并集搜索的「加载更多」才有效（旧实现 slice(0,limit) 把结果锁死在 200）。
 const MAX_MERGE = 2000;
+// fuzzy 词的取样上限：fuzzy 词条是变体名/关联词（home-2、file-search…），
+// 它们在各集合的 API 结果序里靠前，少量即可覆盖主流集合；取满 limit 只会
+// 给合并结果灌入数千条弱相关噪音（搜「箭头」时 "bottom" 一词带回整页
+// align-bottom / panel-bottom）。主词仍取满 limit 保证召回。
+const FUZZY_FETCH_LIMIT = 64;
 export async function searchIconsMulti(
   primary: string[],
   secondary: string[] = [],
@@ -104,7 +118,8 @@ export async function searchIconsMulti(
   const p = primary.map((s) => s.trim()).filter(Boolean);
   const s = secondary.map((s) => s.trim()).filter(Boolean);
   const f = fuzzy.map((s) => s.trim()).filter(Boolean);
-  if (p.length === 0 && s.length === 0 && f.length === 0) return { icons: [], total: 0 };
+  if (p.length === 0 && s.length === 0 && f.length === 0)
+    return { icons: [], total: 0 };
   if (p.length + s.length + f.length === 1) {
     const q = p[0] ?? s[0] ?? f[0];
     return searchIcons(q, limit);
@@ -124,7 +139,7 @@ export async function searchIconsMulti(
   const fuzzyResults = await Promise.all(
     f.map(async (q) => {
       try {
-        return await searchIcons(q, limit);
+        return await searchIcons(q, FUZZY_FETCH_LIMIT);
       } catch {
         return { icons: [], total: 0 };
       }

@@ -1,5 +1,6 @@
 // 搜索结果相关度重排：把最相关的结果排到最前面。
-// 不改变集合成员，只改顺序；0 分图标（API alias/keyword 召回）沉底且保持原序。
+// 强命中充足时会裁掉弱相关长尾（见 WEAK_KEEP_MAX）；0 分图标
+// （API alias/keyword 召回）沉底且保持原序。
 //
 // 设计目标（按优先级）：
 //  1. 组合关键词（用户输入 ≥2 个空格分隔的关键词，如 "首页 wifi" / "arrow left"）：
@@ -33,6 +34,14 @@ const TIER_WEIGHT = (t: number) => t * 1_000_000_000;
 // 共享的 "arrow" 冒充同时覆盖"箭头 向下"两个关键词。
 const COVER_MIN_TIER = TIER_SUBSTR;
 
+// 弱相关长尾裁剪：单词碎片级命中（层级 ≤ TIER_WORD_SEG）只说明"名字里含某个
+// 联想词"，是模糊并集搜索的噪音主力——搜「箭头」时 align-bottom / back-hand /
+// next-week 靠名字含 bottom/back/next 混进来，动辄数千条，把第 2 屏之后变成垃圾场。
+// 当强命中（层级 ≥ TIER_SUBSTR）已达 STRONG_PLENTY 时，弱结果只保留前
+// WEAK_KEEP_MAX 条沉在队尾；强命中不足（冷门词）时不裁剪，保证召回优先。
+const STRONG_PLENTY = 120;
+const WEAK_KEEP_MAX = 120;
+
 /** 一个关键词 token：terms 按主词→联想→fuzzy 的顺序排好。 */
 export interface RankGroup {
   /** 该关键词的全部检索词（已小写、去空） */
@@ -42,16 +51,54 @@ export interface RankGroup {
 // 集合偏好表：前排一线 UI 集 → 越靠前加成越高；未收录的集合 0 加成。
 const SET_RANK = [
   // 一线简洁线性 UI 集
-  "lucide", "ri", "tabler", "heroicons", "heroicons-outline", "heroicons-solid",
-  "mdi-light", "ph", "mingcute", "mdi", "ic", "ant-design", "ep",
-  "bx", "bxs", "gravity-ui", "circum", "akar-icons", "zondicons", "prime",
+  "lucide",
+  "ri",
+  "tabler",
+  "heroicons",
+  "heroicons-outline",
+  "heroicons-solid",
+  "mdi-light",
+  "ph",
+  "mingcute",
+  "mdi",
+  "ic",
+  "ant-design",
+  "ep",
+  "bx",
+  "bxs",
+  "gravity-ui",
+  "circum",
+  "akar-icons",
+  "zondicons",
+  "prime",
   // 中量级 UI 集
-  "fluent", "material-symbols", "solar", "hugeicons", "icon-park", "icon-park-outline",
-  "majesticons", "quill", "oui", "iconamoon", "solaris",
+  "fluent",
+  "material-symbols",
+  "solar",
+  "hugeicons",
+  "icon-park",
+  "icon-park-outline",
+  "majesticons",
+  "quill",
+  "oui",
+  "iconamoon",
+  "solaris",
   // 开发/品牌类
-  "codicon", "vscode-icons", "simple-icons", "devicon", "logos", "bxl", "fa6-brands",
+  "codicon",
+  "vscode-icons",
+  "simple-icons",
+  "devicon",
+  "logos",
+  "bxl",
+  "fa6-brands",
   // 厚重/彩色/特殊风格放最后
-  "fa6-solid", "fa-solid", "game-icons", "flat-color-icons", "noto", "twemoji", "openmoji",
+  "fa6-solid",
+  "fa-solid",
+  "game-icons",
+  "flat-color-icons",
+  "noto",
+  "twemoji",
+  "openmoji",
 ];
 const SET_MAX_BONUS = 50_000; // 远小于 1e9 层差，绝不越层
 
@@ -69,9 +116,17 @@ interface PreparedTerm {
 
 // 归一化 term：trim / 小写 / 空格·下划线 → "-"，便于按段比较。
 function prepareTerm(raw: string): PreparedTerm | null {
-  const norm = raw.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
+  const norm = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-");
   if (!norm) return null;
-  return { segs: norm.split("-"), joined: norm, words: [...new Set(norm.split("-"))] };
+  return {
+    segs: norm.split("-"),
+    joined: norm,
+    words: [...new Set(norm.split("-"))],
+  };
 }
 
 function nameOf(full: string): string {
@@ -83,7 +138,10 @@ function nameOf(full: string): string {
 // 只影响 T3.5/T3 两档；T2/T1 仍用原始段判断，不会漏匹配。
 function coreSegments(segs: string[]): string[] {
   let end = segs.length;
-  while (end > 1 && (STYLE_TOKENS.has(segs[end - 1]) || isSize(segs[end - 1]))) {
+  while (
+    end > 1 &&
+    (STYLE_TOKENS.has(segs[end - 1]) || isSize(segs[end - 1]))
+  ) {
     end--;
   }
   return segs.slice(0, end);
@@ -118,7 +176,10 @@ function scoreTerm(
 ): number {
   if (name === t.joined) return TIER_EXACT;
   if (coreJoined === t.joined) return TIER_CORE_EXACT;
-  if (t.segs.length < core.length && core.slice(0, t.segs.length).join("-") === t.joined) {
+  if (
+    t.segs.length < core.length &&
+    core.slice(0, t.segs.length).join("-") === t.joined
+  ) {
     return TIER_PREFIX;
   }
   if (containsSegments(segs, t.segs)) return TIER_SEGMENT;
@@ -140,6 +201,7 @@ interface ScoredIcon {
   d: number; // 命中总分（覆盖各关键词的层级之和）
   e: number; // 集合偏好加成
   f: number; // -名字长度（越短越"专一"）
+  tier: number; // 最高命中层级（弱尾裁剪用）
 }
 
 /**
@@ -154,7 +216,9 @@ export function rankIconsByRelevance(
   if (icons.length === 0 || groups.length === 0) return icons.slice();
 
   const prepared = groups.map((g) => ({
-    terms: g.terms.map(prepareTerm).filter((x): x is PreparedTerm => x !== null),
+    terms: g.terms
+      .map(prepareTerm)
+      .filter((x): x is PreparedTerm => x !== null),
   }));
   const multi = opts?.multiKeyword ?? false;
 
@@ -183,8 +247,14 @@ export function rankIconsByRelevance(
         if (s > gTier) gTier = s;
         // 最高层级命中位置：单关键词时让主词（如 首页→home，位置最前）
         // 压过 alias 词条（home-2/home-3），避免被高总分反超
-        if (s > bestTier || (s === bestTier && s > 0 && flatIdx < bestTermIdx)) {
-          if (s >= bestTier) { bestTier = s; bestTermIdx = flatIdx; }
+        if (
+          s > bestTier ||
+          (s === bestTier && s > 0 && flatIdx < bestTermIdx)
+        ) {
+          if (s >= bestTier) {
+            bestTier = s;
+            bestTermIdx = flatIdx;
+          }
         }
         flatIdx++;
       }
@@ -200,17 +270,44 @@ export function rankIconsByRelevance(
       b: multi ? TIER_WEIGHT(bestTier) : cover,
       // 单关键词：最高层级命中词条的位置越前越好（home 于 home-2 / house 之前）；
       // 组合关键词：最关键（输入靠前）的组先命中者胜
-      c: multi ? (firstMatch === -1 ? Number.MAX_SAFE_INTEGER : firstMatch) : bestTermIdx,
+      c: multi
+        ? firstMatch === -1
+          ? Number.MAX_SAFE_INTEGER
+          : firstMatch
+        : bestTermIdx,
       d: totalTier,
       e: setBonus(prefix),
       f: -name.length,
+      tier: bestTier,
     };
   });
 
   // ES2019+ Array.sort 稳定：同分保持输入序（= 原 API / round-robin 序）。
   scored.sort(
     (x, y) =>
-      y.a - x.a || y.b - x.b || x.c - y.c || y.d - x.d || y.e - x.e || y.f - x.f,
+      y.a - x.a ||
+      y.b - x.b ||
+      x.c - y.c ||
+      y.d - x.d ||
+      y.e - x.e ||
+      y.f - x.f,
   );
+
+  // 弱尾裁剪：强命中足够多时，碎片级弱结果（含 0 分 alias 召回）只留前 N 条。
+  let strongCount = 0;
+  for (const s of scored) if (s.tier >= TIER_SUBSTR) strongCount++;
+  if (strongCount >= STRONG_PLENTY) {
+    const out: string[] = [];
+    let weakKept = 0;
+    for (const s of scored) {
+      if (s.tier >= TIER_SUBSTR) {
+        out.push(s.ic);
+      } else if (weakKept < WEAK_KEEP_MAX) {
+        weakKept++;
+        out.push(s.ic);
+      }
+    }
+    return out;
+  }
   return scored.map((x) => x.ic);
 }
