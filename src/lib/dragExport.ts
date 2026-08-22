@@ -9,7 +9,6 @@
 import type React from "react";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type SaveLocation = "Desktop" | "Downloads" | "temp";
 
@@ -175,19 +174,13 @@ export function startNativeFileDrag(
   rasterize(svg, color, 128)
     .then(async (png) => {
       const b64 = png.includes(",") ? png.split(",")[1] : null;
-      const win = getCurrentWindow();
-      const [pos, scale] = await Promise.all([
-        win.outerPosition(),
-        win.scaleFactor(),
-      ]);
-      const screenX = pos.x + e.clientX * scale;
-      const screenY = pos.y + e.clientY * scale;
+      // 屏幕坐标由 Rust 主线程用 NSEvent::mouseLocation() 直接取真实鼠标
+      // 位置：从 webview 物理像素换算既有物理/逻辑点之差又有 Y 轴翻转，
+      // 两重错误不可靠（拖影会飘到错误位置），干脆不传坐标。
       await invoke("start_file_drag", {
         fileName: `${short}.svg`,
         svg,
         pngB64: b64,
-        screenX,
-        screenY,
       });
     })
     .catch(() => {

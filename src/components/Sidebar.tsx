@@ -134,7 +134,7 @@ export function Sidebar({
             className={`fav-nav-btn ${isFavView ? "active" : ""}`}
             onClick={onSelectFavView}
           >
-            <Icon icon={isFavView ? "lucide:star" : "lucide:star"} className="fav-star-icon" />
+            <Icon icon={isFavView ? "ri:star-fill" : "lucide:star"} className="fav-star-icon" />
             <span>收藏</span>
           </button>
         </section>

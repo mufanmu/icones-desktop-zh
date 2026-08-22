@@ -61,7 +61,8 @@ export default function App() {
   const [palette, setPalette] = useState<PaletteFilter>("all");
   const [gridSize, setGridSize] = useState(56);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    return (localStorage.getItem("icones_theme_mode") as ThemeMode) || "auto";
+    const v = localStorage.getItem("icones_theme_mode");
+    return v === "auto" || v === "light" || v === "dark" ? v : "auto";
   });
   const [effectiveTheme, setEffectiveTheme] = useState<"dark" | "light">(
     "dark",
@@ -131,8 +132,10 @@ export default function App() {
   // activePrefix 变化时加载该库全量图标（浏览与库内过滤的数据源）
   useEffect(() => {
     let alive = true;
+    // 先同步清空：新库数据未到前不能残留上一个库的图标，
+    // 否则浏览时闪现旧库网格、库内搜索会过滤到旧库的名字
+    setAllIcons([]);
     if (!activePrefix) {
-      setAllIcons([]);
       return;
     }
     fetchCollection(activePrefix)
@@ -300,16 +303,16 @@ export default function App() {
             // 国旗精确过滤：若翻译词含真实国家码，剔除伪装者
             const finalIcons = filterCountryIconsForTerms(r.icons, lowerTerms);
             // 相关度重排：关键词最关联的排最前；组合关键词先比覆盖数
-            setNames(
-              rankIconsByRelevance(finalIcons, rankGroups, { multiKeyword }),
-            );
-            // “加载更多”需要真实总数：普通英文单词搜索用 API 返回的 total（可翻页到 200 以上）；
-            // 中文多词并集 / 国旗过滤 / 已取尽（返回不足 limit）时无可靠服务端总数，用当前结果数。
-            const noServerTotal =
-              !pureAscii ||
-              lowerTerms.some(isCountryCode) ||
-              r.icons.length < limit;
-            setTotal(noServerTotal ? finalIcons.length : r.total);
+            const ranked = rankIconsByRelevance(finalIcons, rankGroups, {
+              multiKeyword,
+            });
+            setNames(ranked);
+            // total 必须与 names 同源（ranked），否则裁剪/过滤会造成
+            // “Showing N of M” 永久对不上、加载更多卡死。
+            // “加载更多” 探测：Iconify API 的 total 恒等于返回数（钳 999），
+            // 已不可信；满页（maybeMore）时 total+1 让哨兵触发下一页请求，
+            // 下一页返回不足新 limit 时自然收敛。
+            setTotal(ranked.length + (r.maybeMore ? 1 : 0));
           }
         } else if (isFavView) {
           // 收藏视图
@@ -325,6 +328,10 @@ export default function App() {
           setNames([]);
           setTotal(0);
         }
+      } catch (err) {
+        // 搜索请求失败（断网/服务不可用）：保留旧结果，只记录，
+        // 不让异常逃逸成 unhandled rejection
+        if (alive) console.error("[search] failed:", err);
       } finally {
         // 无论成功/失败/中止都复位增量加载态并释放锁;旧的 run(alive=false)跳过,
         // 保证锁只由最新一次请求释放
@@ -349,8 +356,18 @@ export default function App() {
     limit,
     allIcons,
     isFavView,
-    favIcons,
   ]);
+
+  // 收藏视图的数据同步单独处理：收藏图标列表不进上面主 effect 的依赖，
+  // 否则搜索态下点一次收藏星星就会把整场搜索的 API 请求全部重发一遍。
+  // 上面 effect 未依赖 favIcons（闭包读到的是当次渲染值，用于视图切换足够），
+  // 收藏增删时由这里补一次同步。
+  useEffect(() => {
+    if (isFavView && !searching) {
+      setNames(favIcons);
+      setTotal(favIcons.length);
+    }
+  }, [favIcons, isFavView, searching]);
 
   // Reset paging + variant whenever the context changes.
   useEffect(() => {
@@ -443,6 +460,20 @@ export default function App() {
 
   // Backspace 在空输入时：先选中 pill、再删 pill 回全局
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ⌘F / Ctrl+F 聚焦主搜索框（搜索框空态 kbd 提示对应的快捷键）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const onInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key !== "Backspace") return;

@@ -13,7 +13,8 @@
 // 门控；前端在 Windows(WebView2) 走 Chromium 的 File 项拖出通道。
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use {
@@ -52,6 +53,27 @@ fn dedupe_path(dir: &PathBuf, stem: &str, ext: &str) -> PathBuf {
     path
 }
 
+/// 临时拖拽目录的滚动清理：文件落下（或丢弃）后就没有用处了，
+/// 但正在进行的拖拽可能还引用着文件，故只删除超过 1 小时的旧文件，
+/// 避免目录随每次拖拽无限膨胀。时钟异常（mtime 在未来）时按新文件跳过。
+#[cfg(target_os = "macos")]
+fn cleanup_temp_dir(dir: &Path) {
+    const MAX_AGE: Duration = Duration::from_secs(3600);
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_recent = match entry.metadata().and_then(|m| m.modified()) {
+            Ok(t) => t.elapsed().map(|age| age < MAX_AGE).unwrap_or(true),
+            Err(_) => true,
+        };
+        if !is_recent {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
 // ==================== macOS 原生拖拽（仅 macOS 编译） ====================
 
 /// 把 SVG 写入系统临时目录，返回 file:// URL。
@@ -59,6 +81,7 @@ fn dedupe_path(dir: &PathBuf, stem: &str, ext: &str) -> PathBuf {
 fn write_temp_svg(file_name: &str, svg: &str) -> Result<String, String> {
     let dir = std::env::temp_dir().join("icones-desktop-drag");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    cleanup_temp_dir(&dir);
 
     let p = std::path::Path::new(file_name);
     let stem = p
@@ -99,8 +122,10 @@ define_class!(
 );
 
 /// 发起原生文件拖拽（仅 macOS）。
-/// file_name：带扩展名（如 home.svg）；png_b64：拖拽预览图（可选，SVG 光栅 PNG）；
-/// screen_x / screen_y：当前鼠标的屏幕坐标（逻辑像素）。
+/// file_name：带扩展名（如 home.svg）；png_b64：拖拽预览图（可选，SVG 光栅 PNG）。
+/// 鼠标位置由主线程 NSEvent::mouseLocation() 直接读取——webview 传上来的
+/// clientX/Y 是 CSS 像素，与 AppKit 屏幕坐标（逻辑点、原点在主屏左下）之间
+/// 既有 scale 换算又有 Y 轴翻转，任何手工换算都容易错，故不再从前端传坐标。
 #[cfg(target_os = "macos")]
 #[tauri::command]
 fn start_file_drag(
@@ -109,8 +134,6 @@ fn start_file_drag(
     file_name: String,
     svg: String,
     png_b64: Option<String>,
-    screen_x: f64,
-    screen_y: f64,
 ) -> Result<(), String> {
     let file_url = write_temp_svg(&file_name, &svg)?;
 
@@ -118,7 +141,7 @@ fn start_file_drag(
     // 故 AppKit 对象在闭包内构造）
     app.run_on_main_thread(move || {
         let _ = (|| -> Result<(), String> {
-            let mt = MainThreadMarker::new().expect("main thread");
+            let _mt = MainThreadMarker::new().expect("main thread");
             let ns_window = unsafe {
                 &*window.ns_window().map_err(|e| e.to_string())?.cast::<NSWindow>()
             };
@@ -139,10 +162,11 @@ fn start_file_drag(
                         .ok()
                         .map(|bytes| NSData::with_bytes(&bytes))
                 })
-                .and_then(|data| unsafe { NSImage::initWithData(NSImage::alloc(), &data) });
+                .and_then(|data| NSImage::initWithData(NSImage::alloc(), &data));
 
-            // 3) 合成鼠标事件（位置 = 当前光标屏幕坐标）
-            let screen_point = NSPoint::new(screen_x, screen_y);
+            // 3) 当前真实鼠标位置（AppKit 屏幕坐标：逻辑点、原点在主屏左下），
+            //    同时用于合成 mouse-down 事件与拖影 frame 换算
+            let screen_point = NSEvent::mouseLocation();
             let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
                 NSEventType::LeftMouseDown,
                 screen_point,
@@ -175,7 +199,7 @@ fn start_file_drag(
 
             // 5) 发起会话（源对象被系统持有直至拖拽结束）
             let source: Retained<DragSource> = unsafe {
-                let this = DragSource::alloc(mt).set_ivars(());
+                let this = DragSource::alloc(_mt).set_ivars(());
                 msg_send![super(this), init]
             };
             let items = NSArray::from_retained_slice(&[dragging_item]);
@@ -199,13 +223,22 @@ fn start_file_drag(
 /// location: "Desktop" / "Downloads" / "temp"；文件名自动去重。
 #[tauri::command]
 fn save_svg_export(file_name: String, svg: String, location: String) -> Result<String, String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "HOME/USERPROFILE not set")?;
+    // 优先用 dirs 解析系统真实目录（Windows 的下载/桌面可能被 OneDrive
+    // 重定向，HOME+固定名拼接会写错位置），失败再回退 HOME 拼接
+    let home_sub = |sub: &str| -> Option<PathBuf> {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .ok()?;
+        Some(PathBuf::from(home).join(sub))
+    };
     let dir = match location.as_str() {
-        "Downloads" => PathBuf::from(&home).join("Downloads"),
+        "Downloads" => dirs::download_dir()
+            .or_else(|| home_sub("Downloads"))
+            .ok_or_else(|| "download dir not found".to_string())?,
         "temp" => std::env::temp_dir().join("icones-desktop-drag"),
-        _ => PathBuf::from(&home).join("Desktop"),
+        _ => dirs::desktop_dir()
+            .or_else(|| home_sub("Desktop"))
+            .ok_or_else(|| "desktop dir not found".to_string())?,
     };
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 

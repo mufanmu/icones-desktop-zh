@@ -48,7 +48,8 @@ export function ExportPanel({
   const [bg, setBg] = useState<string | null>(null); // preview only
   const [format, setFormat] = useState<ExportFormat>("SVG");
   const [action, setAction] = useState<"Copy" | "Download">("Copy");
-  const [copied, setCopied] = useState(false);
+  // 操作完成反馈：Copy → "Copied"，Download → "Saved"（下载成功却说 Copied 会误导）
+  const [done, setDone] = useState<null | "copied" | "saved">(null);
   const colorInput = useRef<HTMLInputElement>(null);
 
   const shortName = name.split(":").pop() ?? name;
@@ -80,30 +81,43 @@ export function ExportPanel({
     if (!svg) return;
     const out = toFormat(svg, format, shortName);
     if (action === "Download") {
-      const ext = format === "React" ? "tsx" : format === "JSX" ? "jsx" : "svg";
+      // 各格式对应的扩展名与 MIME：Data URL 是给 CSS/HTML 内嵌用的
+      // URI 文本，存成 .txt，不能伪装成 .svg（旧逻辑会把 data: 这行
+      // 字符串写进 .svg 文件，目标软件打不开）
+      const meta =
+        format === "React"
+          ? { ext: "tsx", mime: "text/plain" }
+          : format === "JSX"
+            ? { ext: "jsx", mime: "text/plain" }
+            : format === "Data URL"
+              ? { ext: "txt", mime: "text/plain" }
+              : { ext: "svg", mime: "image/svg+xml" };
+      const fileName = `${shortName}.${meta.ext}`;
       // WKWebView 对 blob <a download> 下载支持不可靠，走 Rust 落盘到下载目录
-      const path = await saveSvgFile(`${shortName}.${ext}`, out, "Downloads");
+      const path = await saveSvgFile(fileName, out, "Downloads");
       if (path) {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+        setDone("saved");
+        setTimeout(() => setDone(null), 1500);
         return;
       }
       // 浏览器环境（dev 预览）回退到 blob 下载
-      const blob = new Blob([out], { type: "image/svg+xml" });
+      const blob = new Blob([out], { type: meta.mime });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${shortName}.${ext}`;
+      a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
+      setDone("saved");
+      setTimeout(() => setDone(null), 1500);
     } else {
       try {
         await navigator.clipboard.writeText(out);
       } catch {
         /* clipboard blocked — ignore */
       }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      setDone("copied");
+      setTimeout(() => setDone(null), 1200);
     }
   }
 
@@ -274,9 +288,10 @@ export function ExportPanel({
               </select>
             </div>
             <button className="primary-btn" onClick={onExport}>
-              {copied ? (
+              {done ? (
                 <>
-                  <Icon icon="lucide:check" /> Copied
+                  <Icon icon="lucide:check" />{" "}
+                  {done === "saved" ? "Saved" : "Copied"}
                 </>
               ) : (
                 <>

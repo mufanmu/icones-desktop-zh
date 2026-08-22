@@ -78,6 +78,10 @@ export async function fetchCollection(prefix: string): Promise<CollectionInfo> {
 export interface SearchResult {
   icons: string[]; // full "prefix:name"
   total: number;
+  // 满页标志：返回数达到请求 limit，说明服务端可能还有下一页。
+  // Iconify API 的 total 恒等于实际返回数（受 limit 钳制，上限 999），
+  // 不是真实匹配总数，不能再用它判断能否翻页。
+  maybeMore: boolean;
 }
 
 export async function searchIcons(
@@ -85,13 +89,19 @@ export async function searchIcons(
   limit = 120,
 ): Promise<SearchResult> {
   const q = query.trim();
-  if (!q) return { icons: [], total: 0 };
+  if (!q) return { icons: [], total: 0, maybeMore: false };
   const res = await fetch(
     `${API}/search?query=${encodeURIComponent(q)}&limit=${limit}`,
   );
   const data = (await res.json()) as any;
   const icons: string[] = data.icons ?? [];
-  return { icons, total: data.total ?? icons.length };
+  return {
+    icons,
+    total: data.total ?? icons.length,
+    // API 对 limit<32 会向上钳到 32，小 limit 请求返回数天然 ≥ limit，
+    // 只有 limit ≥ 32 时满页判断才有意义
+    maybeMore: limit >= 32 && icons.length >= limit,
+  };
 }
 
 // 联合搜索：主词（primary）与模糊词条（fuzzy）取全量并 round-robin 交错合并，
@@ -119,7 +129,7 @@ export async function searchIconsMulti(
   const s = secondary.map((s) => s.trim()).filter(Boolean);
   const f = fuzzy.map((s) => s.trim()).filter(Boolean);
   if (p.length === 0 && s.length === 0 && f.length === 0)
-    return { icons: [], total: 0 };
+    return { icons: [], total: 0, maybeMore: false };
   if (p.length + s.length + f.length === 1) {
     const q = p[0] ?? s[0] ?? f[0];
     return searchIcons(q, limit);
@@ -181,5 +191,8 @@ export async function searchIconsMulti(
     }
   }
   const icons = merged.slice(0, MAX_MERGE);
-  return { icons, total: icons.length };
+  // 并集是各词结果一次性取回后本地合并，没有服务端翻页概念；
+  // MAX_MERGE 是防爆截断（设计上接受截断），不能再报 maybeMore，
+  // 否则“2000 of 2001”永远差 1 条、加载更多反复无效重拉
+  return { icons, total: icons.length, maybeMore: false };
 }

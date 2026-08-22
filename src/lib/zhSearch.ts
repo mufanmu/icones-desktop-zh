@@ -17,6 +17,8 @@ interface ZhEntry {
 }
 
 let dictCache: DictEntry[] | null = null;
+// 进行中的加载 promise：并发调用共享一次 fetch；失败后置回 null 允许重试
+let dictPromise: Promise<DictEntry[]> | null = null;
 let zhIndex: Map<string, ZhEntry[]> | null = null; // zh term -> 命中的词条列表
 let cnTermsCache: string[] | null = null; // 中国相关全部英文码集合
 
@@ -36,34 +38,42 @@ export function isChinese(q: string): boolean {
   return CJK.test(q);
 }
 
-export async function loadDict(): Promise<DictEntry[]> {
-  if (dictCache) return dictCache;
-  try {
-    const url = `${import.meta.env.BASE_URL}zh-dict.json`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`dict http ${res.status}`);
-    const data = (await res.json()) as DictEntry[];
-    zhIndex = new Map<string, ZhEntry[]>();
-    cnTermsCache = [];
-    for (const e of data) {
-      for (const zh of e.zh) {
-        const norm = zh.trim();
-        if (!norm) continue;
-        const entry: ZhEntry = { ens: e.en, cn: !!e._cn };
-        const prev = zhIndex.get(norm);
-        zhIndex.set(norm, prev ? [...prev, entry] : [entry]);
+export function loadDict(): Promise<DictEntry[]> {
+  if (dictCache) return Promise.resolve(dictCache);
+  if (!dictPromise) {
+    dictPromise = (async () => {
+      try {
+        const url = `${import.meta.env.BASE_URL}zh-dict.json`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`dict http ${res.status}`);
+        const data = (await res.json()) as DictEntry[];
+        const index = new Map<string, ZhEntry[]>();
+        const cnTerms: string[] = [];
+        for (const e of data) {
+          for (const zh of e.zh) {
+            const norm = zh.trim();
+            if (!norm) continue;
+            const entry: ZhEntry = { ens: e.en, cn: !!e._cn };
+            const prev = index.get(norm);
+            index.set(norm, prev ? [...prev, entry] : [entry]);
+          }
+          if (e._cn) cnTerms.push(...e.en);
+        }
+        zhIndex = index;
+        cnTermsCache = cnTerms;
+        dictCache = data;
+        return data;
+      } catch (err) {
+        // 失败不缓存（dictCache 保持 null）：一次网络抖动不能让
+        // 整个 session 的中文搜索都失效，下次调用会重试
+        console.error("[zh-dict] load failed:", err);
+        return [];
+      } finally {
+        dictPromise = null;
       }
-      if (e._cn) cnTermsCache.push(...e.en);
-    }
-    dictCache = data;
-    return data;
-  } catch (err) {
-    console.error("[zh-dict] load failed:", err);
-    dictCache = [];
-    zhIndex = new Map();
-    cnTermsCache = [];
-    return [];
+    })();
   }
+  return dictPromise;
 }
 
 // 匹配命中记录：score 用于在非精确命中过多时做关联度裁剪。
