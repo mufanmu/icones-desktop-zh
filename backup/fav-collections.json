@@ -1,0 +1,118 @@
+{
+  "_comment": "Icônes (icones-desktop) 收藏的图标库备份：仅存名称与链接，不含图标数据。",
+  "_app_bundle": "studio.deserve.icones",
+  "_storage_key": "icones_fav_collections (localStorage)",
+  "_exported_at": "2026-08-30",
+  "collections": [
+    {
+      "prefix": "icon-park-outline",
+      "name": "IconPark Outline",
+      "url": "https://icon-sets.iconify.design/icon-park-outline/"
+    },
+    {
+      "prefix": "streamline-flex-color",
+      "name": "Flex color icons",
+      "url": "https://icon-sets.iconify.design/streamline-flex-color/"
+    },
+    {
+      "prefix": "streamline-plump-color",
+      "name": "Plump color icons",
+      "url": "https://icon-sets.iconify.design/streamline-plump-color/"
+    },
+    {
+      "prefix": "streamline-stickies-color",
+      "name": "Stickies color icons",
+      "url": "https://icon-sets.iconify.design/streamline-stickies-color/"
+    },
+    {
+      "prefix": "streamline-color",
+      "name": "Streamline color",
+      "url": "https://icon-sets.iconify.design/streamline-color/"
+    },
+    {
+      "prefix": "line-md",
+      "name": "Material Line Icons",
+      "url": "https://icon-sets.iconify.design/line-md/"
+    },
+    {
+      "prefix": "streamline-pixel",
+      "name": "Pixel free icons",
+      "url": "https://icon-sets.iconify.design/streamline-pixel/"
+    },
+    {
+      "prefix": "hugeicons",
+      "name": "Huge Icons",
+      "url": "https://icon-sets.iconify.design/hugeicons/"
+    },
+    {
+      "prefix": "reicon",
+      "name": "Reicon",
+      "url": "https://icon-sets.iconify.design/reicon/"
+    },
+    {
+      "prefix": "solar",
+      "name": "Solar",
+      "url": "https://icon-sets.iconify.design/solar/"
+    },
+    {
+      "prefix": "svg-spinners",
+      "name": "SVG Spinners",
+      "url": "https://icon-sets.iconify.design/svg-spinners/"
+    },
+    {
+      "prefix": "tabler",
+      "name": "Tabler Icons",
+      "url": "https://icon-sets.iconify.design/tabler/"
+    },
+    {
+      "prefix": "streamline-freehand-color",
+      "name": "Freehand color icons",
+      "url": "https://icon-sets.iconify.design/streamline-freehand-color/"
+    },
+    {
+      "prefix": "icon-park",
+      "name": "IconPark",
+      "url": "https://icon-sets.iconify.design/icon-park/"
+    },
+    {
+      "prefix": "dinkie-icons",
+      "name": "Dinkie Icons",
+      "url": "https://icon-sets.iconify.design/dinkie-icons/"
+    },
+    {
+      "prefix": "fluent",
+      "name": "Fluent UI System Icons",
+      "url": "https://icon-sets.iconify.design/fluent/"
+    },
+    {
+      "prefix": "fa7-solid",
+      "name": "Font Awesome Solid",
+      "url": "https://icon-sets.iconify.design/fa7-solid/"
+    },
+    {
+      "prefix": "streamline-freehand",
+      "name": "Freehand free icons",
+      "url": "https://icon-sets.iconify.design/streamline-freehand/"
+    },
+    {
+      "prefix": "glyphs-poly",
+      "name": "Glyphs Poly",
+      "url": "https://icon-sets.iconify.design/glyphs-poly/"
+    },
+    {
+      "prefix": "boxicons",
+      "name": "Boxicons",
+      "url": "https://icon-sets.iconify.design/boxicons/"
+    },
+    {
+      "prefix": "lucide",
+      "name": "Lucide",
+      "url": "https://icon-sets.iconify.design/lucide/"
+    },
+    {
+      "prefix": "mingcute",
+      "name": "MingCute Icon",
+      "url": "https://icon-sets.iconify.design/mingcute/"
+    }
+  ]
+}
